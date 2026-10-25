@@ -9,7 +9,7 @@ export type OrderStatus =
   | 'REJECTED'
   | 'CANCELLED';
 
-export type RegistrationStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+export type RegistrationStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'NOT_REGISTERED';
 
 export type DiscountType = 'PERCENTAGE' | 'FIXED';
 
@@ -172,6 +172,9 @@ export interface RestaurantProfile {
   address: string;
   governorate: string;
   city: string;
+  governorateId?: string | number | null;
+  centerId?: string | number | null;
+  areaId?: string | number | null;
   latitude: number;
   longitude: number;
   deliveryRadiusKm: number;
@@ -185,6 +188,7 @@ export interface RestaurantProfile {
   registrationStatus: RegistrationStatus;
   registrationDate: string;
   rejectionReason?: string;
+  rawDbRestaurant?: any;
 }
 
 export interface AppNotification {

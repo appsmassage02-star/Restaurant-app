@@ -18,15 +18,21 @@ import { SettingsView } from './components/settings/SettingsView';
 import { ProfileView } from './components/profile/ProfileView';
 import { HelpView } from './components/help/HelpView';
 import { Order } from './types';
-import { Bell, X, ShoppingBag } from 'lucide-react';
+import { Bell, X, ShoppingBag, Store, ShieldAlert, Loader2 } from 'lucide-react';
 
 const MainAppContent: React.FC = () => {
   const {
+    authLoading,
     isAuthenticated,
+    isUserBanned,
+    isUserSuspended,
+    banReason,
+    hasRestaurant,
     restaurant,
     orders,
     newOrderAlert,
     clearNewOrderAlert,
+    logout,
   } = useApp();
 
   // Navigation
@@ -61,7 +67,54 @@ const MainAppContent: React.FC = () => {
     }
   };
 
-  // If user is not authenticated: show Login or Register page
+  // 1. Initial Loading State while checking Supabase Session
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4 font-['Cairo',sans-serif] text-white">
+        <div className="w-16 h-16 rounded-3xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center mb-4 shadow-lg shadow-amber-500/10">
+          <Store className="w-8 h-8 text-amber-400 animate-pulse" />
+        </div>
+        <div className="flex items-center gap-2 mb-1">
+          <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
+          <h2 className="text-base font-bold text-white">
+            جاري استعادة الجلسة والتحقق من حساب المطعم...
+          </h2>
+        </div>
+        <p className="text-xs text-slate-400">
+          منظومة طلبات البيت — الاتصال الآمن بـ Supabase
+        </p>
+      </div>
+    );
+  }
+
+  // 2. Banned or Suspended User Guard
+  if (isUserBanned || isUserSuspended) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4 font-['Cairo',sans-serif]">
+        <div className="max-w-md w-full bg-white text-slate-900 rounded-3xl p-6 sm:p-8 text-center space-y-4 shadow-2xl border border-slate-100">
+          <div className="w-16 h-16 bg-rose-100 text-rose-600 rounded-2xl mx-auto flex items-center justify-center">
+            <ShieldAlert className="w-8 h-8" />
+          </div>
+          <h2 className="text-lg font-black text-rose-900">
+            {isUserBanned ? 'تم حظر حساب هذا المستخدم' : 'تم تعليق هذا الحساب مؤقتًا'}
+          </h2>
+          <p className="text-xs text-slate-600 leading-relaxed font-medium">
+            {banReason || 'حسابك معطل حاليًا وفق قيود إدارة منظومة طلبات البيت. لا يمكنك الوصول إلى لوحة تحكم المطعم.'}
+          </p>
+          <div className="pt-2">
+            <button
+              onClick={logout}
+              className="px-6 py-2.5 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
+            >
+              تسجيل الخروج والعودة
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 3. Unauthenticated flow: Login or Register
   if (!isAuthenticated) {
     if (authView === 'REGISTER') {
       return (
@@ -78,20 +131,31 @@ const MainAppContent: React.FC = () => {
     );
   }
 
-  // If user is authenticated, check Registration Status:
-  // "لا تسمح للحساب التجريبي بالانتقال إلى إدارة المطعم قبل اعتماد التسجيل في سيناريوهات المحاكاة."
-  if (restaurant.registrationStatus !== 'APPROVED') {
+  // 4. Authenticated, but user chose to view registration form to submit a new restaurant
+  if (authView === 'REGISTER' && !hasRestaurant) {
+    return (
+      <RegisterPage
+        onGoToLogin={() => setAuthView('LOGIN')}
+        onRegisteredSuccess={() => setAuthView('LOGIN')}
+      />
+    );
+  }
+
+  // 5. Authenticated, but no restaurant approved yet in Supabase (Pending, Rejected, or Unregistered)
+  // "لا تعرض رسالة نجاح ولا تسمح بدخول لوحة إدارة مطعم غير موجود فعليًا أو غير مرتبط بالمستخدم الحالي."
+  if (!hasRestaurant || restaurant.registrationStatus !== 'APPROVED') {
     return (
       <>
         <RegistrationStatusPage
           onEnterDashboard={() => setCurrentView('dashboard')}
+          onGoToRegister={() => setAuthView('REGISTER')}
         />
         <DemoBar />
       </>
     );
   }
 
-  // Main Dashboard Layout
+  // 6. Main Dashboard Layout (Only for verified approved restaurant owned by this user)
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-['Cairo',sans-serif]">
       {/* Top Header */}
@@ -143,7 +207,7 @@ const MainAppContent: React.FC = () => {
         </main>
       </div>
 
-      {/* Floating Demo Simulator Bar */}
+      {/* Connection Monitor Bar */}
       <DemoBar />
 
       {/* Live In-App New Order Toast Banner */}

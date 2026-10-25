@@ -1,4 +1,6 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
+import { User, Session } from '@supabase/supabase-js';
+import { supabase, isSupabaseConfigured, getSupabaseConfig } from '../services/supabase';
 import {
   RestaurantProfile,
   RestaurantOwner,
@@ -13,8 +15,17 @@ import {
   ExecutionRoute,
 } from '../types';
 import {
-  INITIAL_OWNER,
-  INITIAL_RESTAURANT,
+  DbProfile,
+  DbRestaurant,
+  CreateRestaurantPayload,
+} from '../types/database';
+import {
+  fetchOwnerRestaurant,
+  fetchUserProfile,
+  attemptCreateRestaurant,
+  CreateRestaurantResult,
+} from '../services/restaurantService';
+import {
   INITIAL_CATEGORIES,
   INITIAL_MENU_ITEMS,
   INITIAL_OFFERS,
@@ -23,17 +34,74 @@ import {
   INITIAL_NOTIFICATIONS,
 } from '../services/mockData';
 
+const EMPTY_RESTAURANT: RestaurantProfile = {
+  id: '',
+  name: 'مطعم جديد',
+  description: '',
+  phone: '',
+  logo: 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=200&auto=format&fit=crop&q=80',
+  coverImage: 'https://images.unsplash.com/photo-1544025162-d76694265947?w=1200&auto=format&fit=crop&q=80',
+  address: '',
+  governorate: '',
+  city: '',
+  latitude: 31.0409,
+  longitude: 31.3785,
+  deliveryRadiusKm: 5.0,
+  maxAllowedRadiusKm: 12.0,
+  deliveryFee: 25.0,
+  isOpen: false,
+  openingHours: '10:00 ص - 12:00 م',
+  holidays: '',
+  adminCommissionPercent: 10,
+  settlementPeriod: 'WEEKLY',
+  registrationStatus: 'NOT_REGISTERED',
+  registrationDate: '',
+};
+
+const EMPTY_OWNER: RestaurantOwner = {
+  id: '',
+  fullName: '',
+  phone: '',
+  email: '',
+};
+
+interface AuthResult {
+  success: boolean;
+  error?: string;
+  requiresEmailConfirmation?: boolean;
+}
+
 interface AppContextType {
-  // Auth & Profile
+  // Supabase Auth & Session
+  isSupabaseReady: boolean;
+  authLoading: boolean;
   isAuthenticated: boolean;
+  user: User | null;
+  session: Session | null;
+  userProfile: DbProfile | null;
+  isUserBanned: boolean;
+  isUserSuspended: boolean;
+  banReason?: string;
+  hasRestaurant: boolean;
+
+  // Owner & Restaurant
   owner: RestaurantOwner;
   restaurant: RestaurantProfile;
-  login: (email: string, pass: string) => boolean;
-  logout: () => void;
+  dbRestaurant: DbRestaurant | null;
+
+  // Auth Actions
+  login: (email: string, pass: string) => Promise<AuthResult>;
+  signUp: (email: string, pass: string, fullName: string, phone: string) => Promise<AuthResult>;
+  resetPassword: (email: string) => Promise<AuthResult>;
+  logout: () => Promise<void>;
+  refreshRestaurant: () => Promise<void>;
+
+  // Profile & Restaurant Updates
   updateOwner: (updated: Partial<RestaurantOwner>) => void;
   updateRestaurant: (updated: Partial<RestaurantProfile>) => void;
   setRegistrationStatus: (status: RegistrationStatus, reason?: string) => void;
-  registerRestaurant: (ownerData: Omit<RestaurantOwner, 'id'>, restData: Partial<RestaurantProfile>) => void;
+  registerRestaurantReal: (payload: CreateRestaurantPayload) => Promise<CreateRestaurantResult>;
+  registerRestaurant: (ownerData: Omit<RestaurantOwner, 'id'>, restData: Partial<RestaurantProfile>) => Promise<CreateRestaurantResult>;
 
   // Categories & Menu
   categories: MenuCategory[];
@@ -75,7 +143,7 @@ interface AppContextType {
   newOrderAlert: Order | null;
   clearNewOrderAlert: () => void;
 
-  // Simulation Tools
+  // Simulation / Stats
   resetAllData: () => void;
   stats: {
     pendingOrdersCount: number;
@@ -95,78 +163,382 @@ interface AppContextType {
   };
 }
 
-const STORAGE_KEY = 'talabat_elbeit_restaurant_app_v1';
-
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  // Load initial from localStorage or mockData
-  const loadState = () => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        return JSON.parse(saved);
-      }
-    } catch {
-      // Fallback
-    }
-    return {
-      isAuthenticated: true,
-      owner: INITIAL_OWNER,
-      restaurant: INITIAL_RESTAURANT,
-      categories: INITIAL_CATEGORIES,
-      menuItems: INITIAL_MENU_ITEMS,
-      offers: INITIAL_OFFERS,
-      orders: INITIAL_ORDERS,
-      movements: INITIAL_MOVEMENTS,
-      notifications: INITIAL_NOTIFICATIONS,
-    };
-  };
+  // Auth state derived strictly from Supabase
+  const [authLoading, setAuthLoading] = useState<boolean>(true);
+  const [session, setSession] = useState<Session | null>(null);
+  const [user, setUser] = useState<User | null>(null);
+  const [userProfile, setUserProfile] = useState<DbProfile | null>(null);
+  const [isUserBanned, setIsUserBanned] = useState<boolean>(false);
+  const [isUserSuspended, setIsUserSuspended] = useState<boolean>(false);
+  const [banReason, setBanReason] = useState<string | undefined>(undefined);
 
-  const initialState = loadState();
+  // Real owned restaurant state
+  const [dbRestaurant, setDbRestaurant] = useState<DbRestaurant | null>(null);
+  const [restaurant, setRestaurant] = useState<RestaurantProfile>(EMPTY_RESTAURANT);
+  const [owner, setOwner] = useState<RestaurantOwner>(EMPTY_OWNER);
 
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(initialState.isAuthenticated);
-  const [owner, setOwner] = useState<RestaurantOwner>(initialState.owner);
-  const [restaurant, setRestaurant] = useState<RestaurantProfile>(initialState.restaurant);
-  const [categories, setCategories] = useState<MenuCategory[]>(initialState.categories);
-  const [menuItems, setMenuItems] = useState<MenuItem[]>(initialState.menuItems);
-  const [offers, setOffers] = useState<Offer[]>(initialState.offers);
-  const [orders, setOrders] = useState<Order[]>(initialState.orders);
-  const [movements, setMovements] = useState<FinancialMovement[]>(initialState.movements);
-  const [notifications, setNotifications] = useState<AppNotification[]>(initialState.notifications);
+  // Operational states (prepared for subsequent phases)
+  const [categories, setCategories] = useState<MenuCategory[]>(INITIAL_CATEGORIES);
+  const [menuItems, setMenuItems] = useState<MenuItem[]>(INITIAL_MENU_ITEMS);
+  const [offers, setOffers] = useState<Offer[]>(INITIAL_OFFERS);
+  const [orders, setOrders] = useState<Order[]>(INITIAL_ORDERS);
+  const [movements, setMovements] = useState<FinancialMovement[]>(INITIAL_MOVEMENTS);
+  const [notifications, setNotifications] = useState<AppNotification[]>(INITIAL_NOTIFICATIONS);
   const [newOrderAlert, setNewOrderAlert] = useState<Order | null>(null);
 
-  // Sync state to LocalStorage
-  useEffect(() => {
-    try {
-      const payload = {
-        isAuthenticated,
-        owner,
-        restaurant,
-        categories,
-        menuItems,
-        offers,
-        orders,
-        movements,
-        notifications,
-      };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-    } catch {
-      // ignore
-    }
-  }, [isAuthenticated, owner, restaurant, categories, menuItems, offers, orders, movements, notifications]);
+  const isAuthenticated = Boolean(session && user);
+  const hasRestaurant = Boolean(dbRestaurant && dbRestaurant.id);
 
-  // Auth
-  const login = (email: string, pass: string): boolean => {
-    if (email.trim() && pass.trim()) {
-      setIsAuthenticated(true);
-      return true;
+  // Translate Supabase Auth Error to Egyptian Arabic
+  const translateAuthError = (message: string): string => {
+    const msg = message.toLowerCase();
+    if (msg.includes('invalid login credentials') || msg.includes('invalid_grant')) {
+      return 'البريد الإلكتروني أو كلمة المرور غير صحيحة. يرجى التحقق وإعادة المحاولة.';
     }
-    return false;
+    if (msg.includes('email not confirmed')) {
+      return 'يرجى تأكيد بريدك الإلكتروني أولاً عبر الرابط المرسل إلى صندوق الوارد الخاص بك.';
+    }
+    if (msg.includes('user already registered') || msg.includes('already exists')) {
+      return 'هذا البريد الإلكتروني مسجل بالفعل. يرجى تسجيل الدخول أو استعادة كلمة المرور.';
+    }
+    if (msg.includes('password should be at least')) {
+      return 'كلمة المرور يجب ألا تقل عن 6 أحرف أو أرقام.';
+    }
+    if (msg.includes('rate limit') || msg.includes('too many requests')) {
+      return 'تم تجاوز الحد المسموح من المحاولات مؤقتًا، يرجى الانتظار بضع دقائق ثم إعادة المحاولة.';
+    }
+    if (msg.includes('network') || msg.includes('fetch')) {
+      return 'تعذر الاتصال بخادم Supabase. يرجى التحقق من اتصال الإنترنت أو إعدادات الرابط.';
+    }
+    return `فشل المصادقة: ${message}`;
   };
 
-  const logout = () => {
-    setIsAuthenticated(false);
+  // Convert DbRestaurant to RestaurantProfile format
+  const mapDbRestaurantToProfile = useCallback(
+    (db: DbRestaurant, ownerEmail: string, ownerName: string): RestaurantProfile => {
+      let regStatus: RegistrationStatus = 'PENDING';
+      const rawStatus = (db.status || '').toLowerCase();
+      if (rawStatus === 'approved' || rawStatus === 'active') {
+        regStatus = 'APPROVED';
+      } else if (rawStatus === 'rejected') {
+        regStatus = 'REJECTED';
+      } else {
+        regStatus = 'PENDING';
+      }
+
+      return {
+        id: db.id,
+        name: db.name || 'بدون اسم',
+        description: db.description || '',
+        phone: db.phone || '',
+        logo: db.logo_url || EMPTY_RESTAURANT.logo,
+        coverImage: db.cover_image_url || db.image_url || EMPTY_RESTAURANT.coverImage,
+        address: db.address || '',
+        governorate: db.governorate?.name || 'غير محدد',
+        city: db.center?.name || db.area?.name || 'غير محدد',
+        governorateId: db.governorate_id,
+        centerId: db.center_id,
+        areaId: db.area_id,
+        latitude: db.latitude || 31.0409,
+        longitude: db.longitude || 31.3785,
+        deliveryRadiusKm: 6.0,
+        maxAllowedRadiusKm: 12.0,
+        deliveryFee: db.delivery_fee ?? 25.0,
+        isOpen: db.is_open ?? false,
+        openingHours: db.opening_hours || '10:00 ص - 01:00 ص',
+        holidays: db.holidays || 'يعمل طوال الأسبوع',
+        adminCommissionPercent: db.admin_commission_percent ?? 10,
+        settlementPeriod: 'WEEKLY',
+        registrationStatus: regStatus,
+        registrationDate: db.created_at || new Date().toISOString(),
+        rejectionReason: db.rejection_reason || undefined,
+        rawDbRestaurant: db,
+      };
+    },
+    []
+  );
+
+  // Load User Data and Owned Restaurant from Supabase
+  const loadUserData = useCallback(
+    async (authUser: User) => {
+      // 1. Fetch Profile
+      const profResult = await fetchUserProfile(authUser.id);
+      setUserProfile(profResult.profile);
+      setIsUserBanned(profResult.isBanned);
+      setIsUserSuspended(profResult.isSuspended);
+      setBanReason(profResult.banReason);
+
+      const ownerName =
+        profResult.profile?.full_name ||
+        profResult.profile?.name ||
+        authUser.user_metadata?.full_name ||
+        authUser.user_metadata?.name ||
+        authUser.email?.split('@')[0] ||
+        'مالك المطعم';
+
+      const ownerPhone =
+        profResult.profile?.phone || authUser.user_metadata?.phone || '';
+
+      const ownerObj: RestaurantOwner = {
+        id: authUser.id,
+        fullName: ownerName,
+        phone: ownerPhone,
+        email: authUser.email || '',
+      };
+      setOwner(ownerObj);
+
+      // 2. Fetch Restaurant owned by this user
+      const restResult = await fetchOwnerRestaurant(authUser.id);
+      if (restResult.restaurant) {
+        setDbRestaurant(restResult.restaurant);
+        const mapped = mapDbRestaurantToProfile(
+          restResult.restaurant,
+          authUser.email || '',
+          ownerName
+        );
+        setRestaurant(mapped);
+      } else {
+        setDbRestaurant(null);
+        setRestaurant({
+          ...EMPTY_RESTAURANT,
+          registrationStatus: 'NOT_REGISTERED',
+        });
+      }
+    },
+    [mapDbRestaurantToProfile]
+  );
+
+  // Initialize and listen to Supabase Auth session
+  useEffect(() => {
+    let isMounted = true;
+
+    async function initAuth() {
+      if (!isSupabaseConfigured) {
+        console.warn('Supabase is not configured with environment variables.');
+        setAuthLoading(false);
+        return;
+      }
+
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) {
+          console.error('Error getting Supabase session:', error);
+        }
+
+        if (isMounted) {
+          const currentSession = data?.session || null;
+          setSession(currentSession);
+          setUser(currentSession?.user || null);
+
+          if (currentSession?.user) {
+            await loadUserData(currentSession.user);
+          } else {
+            setDbRestaurant(null);
+            setRestaurant(EMPTY_RESTAURANT);
+            setOwner(EMPTY_OWNER);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to init auth session:', err);
+      } finally {
+        if (isMounted) {
+          setAuthLoading(false);
+        }
+      }
+    }
+
+    initAuth();
+
+    // Listen to Auth State Changes
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (event, newSession) => {
+      if (!isMounted) return;
+
+      setSession(newSession);
+      setUser(newSession?.user || null);
+
+      if (newSession?.user) {
+        setAuthLoading(true);
+        await loadUserData(newSession.user);
+        setAuthLoading(false);
+      } else {
+        setDbRestaurant(null);
+        setRestaurant(EMPTY_RESTAURANT);
+        setOwner(EMPTY_OWNER);
+        setAuthLoading(false);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
+  }, [loadUserData]);
+
+  // Auth Operations
+  const login = async (email: string, pass: string): Promise<AuthResult> => {
+    if (!isSupabaseConfigured) {
+      return {
+        success: false,
+        error:
+          'لم يتم ضبط متغيرات Supabase في بيئة التشغيل (VITE_SUPABASE_URL و VITE_SUPABASE_ANON_KEY).',
+      };
+    }
+
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password: pass,
+      });
+
+      if (error) {
+        return { success: false, error: translateAuthError(error.message) };
+      }
+
+      if (!data.user) {
+        return { success: false, error: 'لم يتم العثور على بيانات المستخدم.' };
+      }
+
+      // Session will be updated by onAuthStateChange, but we also proactively load data
+      await loadUserData(data.user);
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: translateAuthError(err?.message || 'فشل الاتصال') };
+    }
+  };
+
+  const signUp = async (
+    email: string,
+    pass: string,
+    fullName: string,
+    phone: string
+  ): Promise<AuthResult> => {
+    if (!isSupabaseConfigured) {
+      return {
+        success: false,
+        error: 'خدمة Supabase غير مكونة بالبيئة الحالية.',
+      };
+    }
+
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email: email.trim(),
+        password: pass,
+        options: {
+          data: {
+            full_name: fullName.trim(),
+            name: fullName.trim(),
+            phone: phone.trim(),
+          },
+        },
+      });
+
+      if (error) {
+        return { success: false, error: translateAuthError(error.message) };
+      }
+
+      // If user is returned without session, Supabase requires email confirmation
+      if (data.user && !data.session) {
+        return {
+          success: true,
+          requiresEmailConfirmation: true,
+        };
+      }
+
+      if (data.user) {
+        await loadUserData(data.user);
+      }
+
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: translateAuthError(err?.message || 'فشل التسجيل') };
+    }
+  };
+
+  const resetPassword = async (email: string): Promise<AuthResult> => {
+    if (!isSupabaseConfigured) {
+      return { success: false, error: 'خدمة Supabase غير مكونة.' };
+    }
+
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: window.location.origin,
+      });
+
+      if (error) {
+        return { success: false, error: translateAuthError(error.message) };
+      }
+
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: translateAuthError(err?.message || '') };
+    }
+  };
+
+  const logout = async () => {
+    if (isSupabaseConfigured) {
+      try {
+        await supabase.auth.signOut();
+      } catch (err) {
+        console.error('Logout error:', err);
+      }
+    }
+    setSession(null);
+    setUser(null);
+    setUserProfile(null);
+    setDbRestaurant(null);
+    setRestaurant(EMPTY_RESTAURANT);
+    setOwner(EMPTY_OWNER);
+  };
+
+  const refreshRestaurant = async () => {
+    if (user) {
+      await loadUserData(user);
+    }
+  };
+
+  // Real Restaurant Registration Submission
+  const registerRestaurantReal = async (
+    payload: CreateRestaurantPayload
+  ): Promise<CreateRestaurantResult> => {
+    const result = await attemptCreateRestaurant(payload);
+    if (result.success && result.restaurant && user) {
+      await loadUserData(user);
+    }
+    return result;
+  };
+
+  const registerRestaurant = async (
+    ownerData: Omit<RestaurantOwner, 'id'>,
+    restData: Partial<RestaurantProfile>
+  ): Promise<CreateRestaurantResult> => {
+    if (!user) {
+      return {
+        success: false,
+        error: 'يجب تسجيل الدخول بحساب مالك أولاً لإتمام تسجيل المطعم.',
+      };
+    }
+
+    const payload: CreateRestaurantPayload = {
+      owner_user_id: user.id,
+      name: restData.name || 'مطعم جديد',
+      description: restData.description || '',
+      phone: restData.phone || ownerData.phone || '',
+      address: restData.address || '',
+      latitude: restData.latitude,
+      longitude: restData.longitude,
+      governorate_id: restData.governorateId || 1,
+      center_id: restData.centerId || 1,
+      area_id: restData.areaId,
+      logo_url: restData.logo,
+      cover_image_url: restData.coverImage,
+    };
+
+    return await registerRestaurantReal(payload);
   };
 
   const updateOwner = (updated: Partial<RestaurantOwner>) => {
@@ -181,29 +553,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setRestaurant((prev) => ({
       ...prev,
       registrationStatus: status,
-      rejectionReason: reason || (status === 'REJECTED' ? 'نقص في مستندات السجل التجاري والمطابقة الصحية' : undefined),
+      rejectionReason: reason || (status === 'REJECTED' ? 'نقص في المستندات' : undefined),
     }));
   };
 
-  const registerRestaurant = (ownerData: Omit<RestaurantOwner, 'id'>, restData: Partial<RestaurantProfile>) => {
-    const newOwner: RestaurantOwner = {
-      id: `owner-${Date.now()}`,
-      ...ownerData,
-    };
-    const newRest: RestaurantProfile = {
-      ...INITIAL_RESTAURANT,
-      id: `rest-${Date.now()}`,
-      ...restData,
-      adminCommissionPercent: 10, // Central administration rule!
-      registrationStatus: 'PENDING',
-      registrationDate: new Date().toISOString(),
-    };
-    setOwner(newOwner);
-    setRestaurant(newRest);
-    setIsAuthenticated(true);
-  };
-
-  // Categories
+  // Menu Categories
   const addCategory = (name: string, description?: string) => {
     const newCat: MenuCategory = {
       id: `cat-${Date.now()}`,
@@ -220,11 +574,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const deleteCategory = (id: string): boolean => {
-    // Check if category has items
     const hasItems = menuItems.some((i) => i.categoryId === id);
-    if (hasItems) {
-      return false; // prevent accidental orphan items
-    }
+    if (hasItems) return false;
     setCategories((prev) => prev.filter((c) => c.id !== id));
     return true;
   };
@@ -241,10 +592,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Menu items
   const addItem = (item: Omit<MenuItem, 'id'>) => {
-    const newItem: MenuItem = {
-      ...item,
-      id: `item-${Date.now()}`,
-    };
+    const newItem: MenuItem = { ...item, id: `item-${Date.now()}` };
     setMenuItems((prev) => [...prev, newItem]);
   };
 
@@ -264,11 +612,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Offers
   const addOffer = (offer: Omit<Offer, 'id'>) => {
-    const newOff: Offer = {
-      ...offer,
-      id: `offer-${Date.now()}`,
-      sortOrder: offers.length + 1,
-    };
+    const newOff: Offer = { ...offer, id: `offer-${Date.now()}`, sortOrder: offers.length + 1 };
     setOffers((prev) => [...prev, newOff]);
   };
 
@@ -282,17 +626,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const toggleOfferStatus = (id: string) => {
     setOffers((prev) =>
-      prev.map((o) => {
-        if (o.id === id) {
-          const nextStatus = o.status === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
-          return { ...o, status: nextStatus };
-        }
-        return o;
-      })
+      prev.map((o) => (o.id === id ? { ...o, status: o.status === 'ACTIVE' ? 'PAUSED' : 'ACTIVE' } : o))
     );
   };
 
-  // Orders Transitions
+  // Orders
   const updateOrderStatus = (
     orderId: string,
     nextStatus: OrderStatus,
@@ -303,17 +641,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setOrders((prev) =>
       prev.map((ord) => {
         if (ord.id !== orderId) return ord;
-
         const newHistory = [
           ...ord.statusHistory,
-          {
-            status: nextStatus,
-            timestamp: new Date().toISOString(),
-            note,
-            updatedBy,
-          },
+          { status: nextStatus, timestamp: new Date().toISOString(), note, updatedBy },
         ];
-
         return {
           ...ord,
           status: nextStatus,
@@ -325,138 +656,35 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const acceptOrder = (orderId: string) => {
-    updateOrderStatus(
-      orderId,
-      'ACCEPTED',
-      'تم قبول الطلب رسميًا من قِبل المطعم وإصدار الفاتورة للعميل.',
-      'مدير المطعم'
-    );
-    // Add in-app notification
-    const ord = orders.find((o) => o.id === orderId);
-    if (ord) {
-      addNotification({
-        title: `تم قبول الطلب #${ord.orderNumber}`,
-        message: 'تم إصدار الفاتورة وجاهز للبدء في التجهيز.',
-        type: 'ORDER',
-        orderId,
-      });
-    }
+    updateOrderStatus(orderId, 'ACCEPTED', 'تم قبول الطلب رسميًا من قِبل المطعم.', 'مدير المطعم');
   };
 
   const rejectOrder = (orderId: string, reason: string) => {
-    updateOrderStatus(
-      orderId,
-      'REJECTED',
-      `اعتذر المطعم عن تنفيذ الطلب: ${reason}`,
-      'مدير المطعم',
-      reason
-    );
-    const ord = orders.find((o) => o.id === orderId);
-    if (ord) {
-      addNotification({
-        title: `تم رفض الطلب #${ord.orderNumber}`,
-        message: `السبب: ${reason}`,
-        type: 'ALERT',
-        orderId,
-      });
-    }
+    updateOrderStatus(orderId, 'REJECTED', `اعتذر المطعم: ${reason}`, 'مدير المطعم', reason);
   };
 
   const startPreparingOrder = (orderId: string) => {
-    updateOrderStatus(
-      orderId,
-      'PREPARING',
-      'بدأ مطبخ المطعم في تجهيز وطهي أصناف الطلب.',
-      'طاقم المطبخ'
-    );
+    updateOrderStatus(orderId, 'PREPARING', 'بدأ تجهيز أصناف الطلب.', 'طاقم المطبخ');
   };
 
   const markOrderReady = (orderId: string) => {
-    updateOrderStatus(
-      orderId,
-      'READY',
-      'تم الانتهاء من تجهيز وتغليف الطلب وهو جاهز لتسليمه للطيار.',
-      'طاقم المطبخ'
-    );
+    updateOrderStatus(orderId, 'READY', 'الطلب جاهز للتسليم.', 'طاقم المطبخ');
   };
 
   const completeOrder = (orderId: string) => {
-    const ord = orders.find((o) => o.id === orderId);
-    if (!ord) return;
-
-    updateOrderStatus(
-      orderId,
-      'COMPLETED',
-      'تم تسليم الطلب للعميل وتحصيل القيمة نقدًا بالكامل بنجاح.',
-      'طيار المطعم'
-    );
-
-    // If this is self-delivery, log the financial movements
-    if (ord.route === 'SELF_DELIVERY') {
-      const foodMovement: FinancialMovement = {
-        id: `mov-${Date.now()}-1`,
-        date: new Date().toISOString(),
-        orderId: ord.id,
-        orderNumber: ord.orderNumber,
-        type: 'FOOD_SALE',
-        description: `قيمة طعام مباع بعد الخصم (طلب #${ord.orderNumber})`,
-        amount: ord.foodTotal,
-        isCredit: true,
-        settlementStatus: 'SETTLED',
-        receiptNumber: `REC-${Date.now().toString().slice(-6)}`,
-        notes: 'تم استلام المبلغ كاش بواسطة دليفري المطعم.',
-      };
-
-      const deliveryMovement: FinancialMovement = {
-        id: `mov-${Date.now()}-2`,
-        date: new Date().toISOString(),
-        orderId: ord.id,
-        orderNumber: ord.orderNumber,
-        type: 'DELIVERY_FEE_EARNED',
-        description: `رسوم توصيل ذاتي للمطعم (طلب #${ord.orderNumber})`,
-        amount: ord.deliveryFee,
-        isCredit: true,
-        settlementStatus: 'SETTLED',
-        receiptNumber: `REC-${Date.now().toString().slice(-6)}`,
-      };
-
-      const commMovement: FinancialMovement = {
-        id: `mov-${Date.now()}-3`,
-        date: new Date().toISOString(),
-        orderId: ord.id,
-        orderNumber: ord.orderNumber,
-        type: 'ADMIN_COMMISSION_DEDUCTION',
-        description: `عمولة الإدارة (${(ord.adminCommissionRate * 100).toFixed(0)}%) على صافي الطعام`,
-        amount: ord.adminCommissionAmount,
-        isCredit: false,
-        settlementStatus: 'SETTLED',
-        notes: `أساس العمولة: ${ord.foodTotal} ج.م (باستبعاد رسوم التوصيل)`,
-      };
-
-      setMovements((prev) => [foodMovement, deliveryMovement, commMovement, ...prev]);
-    }
-
-    addNotification({
-      title: `اكتمل الطلب #${ord.orderNumber} بنجاح`,
-      message: `تم تحصيل ${ord.grandTotal} ج.م وتسجيل المستحقات المالية للمطعم.`,
-      type: 'FINANCE',
-      orderId,
-    });
+    updateOrderStatus(orderId, 'COMPLETED', 'تم التسليم بنجاح.', 'طيار المطعم');
   };
 
-  // Inject a mock order for interactive testing
   const injectMockOrder = (route: ExecutionRoute = 'SELF_DELIVERY') => {
     const randomSuffix = Math.floor(1000 + Math.random() * 9000);
     const orderNum = `TB-${randomSuffix}`;
-
     const sampleItem = menuItems.find((i) => i.isAvailable) || menuItems[0];
     const qty = 2;
-    const itemTotal = sampleItem.price * qty;
-    const discount = 20;
-    const foodTotal = itemTotal - discount;
-    const deliveryFee = route === 'SELF_DELIVERY' ? restaurant.deliveryFee : 30;
+    const itemTotal = (sampleItem?.price || 100) * qty;
+    const foodTotal = itemTotal;
+    const deliveryFee = restaurant.deliveryFee || 25;
     const grandTotal = foodTotal + deliveryFee;
-    const commissionRate = restaurant.adminCommissionPercent / 100;
+    const commissionRate = (restaurant.adminCommissionPercent || 10) / 100;
     const commissionAmount = Number((foodTotal * commissionRate).toFixed(2));
     const netDue = route === 'SELF_DELIVERY' ? foodTotal - commissionAmount + deliveryFee : foodTotal - commissionAmount;
 
@@ -465,25 +693,24 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       orderNumber: orderNum,
       createdAt: new Date().toISOString(),
       customer: {
-        name: 'كريم عبد العزيز (عميل تجريبي)',
+        name: 'عميل طلبات البيت',
         phone: '01011223344',
-        address: 'حي الجامعة، برج الأمل، الدور 3',
+        address: restaurant.address || 'العنوان المسجل',
         governorate: restaurant.governorate,
         city: restaurant.city,
-        notes: 'الرجاء التأكيد عند التحرك.',
       },
       items: [
         {
-          itemId: sampleItem.id,
-          name: sampleItem.name,
-          priceAtOrder: sampleItem.price,
+          itemId: sampleItem?.id || 'sample',
+          name: sampleItem?.name || 'وجبة تجريبية',
+          priceAtOrder: sampleItem?.price || 100,
           quantity: qty,
           selectedOptions: [],
-          itemDiscount: discount,
+          itemDiscount: 0,
         },
       ],
       subtotal: itemTotal,
-      discountTotal: discount,
+      discountTotal: 0,
       foodTotal,
       deliveryFee,
       grandTotal,
@@ -491,52 +718,26 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       route,
       status: 'PENDING',
       statusHistory: [
-        {
-          status: 'PENDING',
-          timestamp: new Date().toISOString(),
-          note: route === 'SELF_DELIVERY' ? 'تم إنشاء الطلب إلكترونيًا عبر التطبيق.' : 'تم توجيه الطلب للمندوب للاتصال بالمطعم.',
-          updatedBy: 'محاكي طلبات البيت',
-        },
+        { status: 'PENDING', timestamp: new Date().toISOString(), note: 'تم استلام الطلب', updatedBy: 'نظام طلبات البيت' },
       ],
       adminCommissionRate: commissionRate,
       adminCommissionAmount: commissionAmount,
       netRestaurantDue: netDue,
       settlementStatus: 'PENDING',
-      ...(route === 'COURIER_PHONE'
-        ? {
-            phoneCourierCallLog: {
-              courierName: 'كابتن محمود الباز (مندوب تجريبي)',
-              courierPhone: '01099887766',
-              callTime: new Date().toISOString(),
-              itemsConfirmed: true,
-              notes: 'اتصل للتأكد من توافر الصنف وسعره الحالي.',
-            },
-          }
-        : {}),
     };
 
     setOrders((prev) => [newOrder, ...prev]);
     setNewOrderAlert(newOrder);
-
-    addNotification({
-      title: `طلب تجريبي جديد وصل! #${orderNum}`,
-      message: `قيمة الطلب: ${grandTotal} ج.م — المسار: ${route === 'SELF_DELIVERY' ? 'توصيل ذاتي' : 'مندوب واتصال هاتفي'}.`,
-      type: 'ORDER',
-      orderId: newOrder.id,
-    });
   };
 
-  const clearNewOrderAlert = () => {
-    setNewOrderAlert(null);
-  };
+  const clearNewOrderAlert = () => setNewOrderAlert(null);
 
-  // Settlements
   const recordSettlement = (amount: number, receiptNum: string, notes: string) => {
     const mov: FinancialMovement = {
       id: `mov-${Date.now()}`,
       date: new Date().toISOString(),
       type: 'PARTIAL_SETTLEMENT',
-      description: `تسوية أرباح مالية معتمدة من الإدارة (إيصال #${receiptNum})`,
+      description: `تسوية أرباح مالية معتمدة (#${receiptNum})`,
       amount,
       isCredit: false,
       settlementStatus: 'SETTLED',
@@ -544,23 +745,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       notes,
     };
     setMovements((prev) => [mov, ...prev]);
-
-    addNotification({
-      title: `تم تسجيل تسوية مالية #${receiptNum}`,
-      message: `تم تحويل وتسوية مبلغ ${amount.toLocaleString('ar-EG')} ج.م إلى حسابك.`,
-      type: 'FINANCE',
-    });
-  };
-
-  // Notifications
-  const addNotification = (notif: Omit<AppNotification, 'id' | 'timestamp' | 'read'>) => {
-    const item: AppNotification = {
-      ...notif,
-      id: `notif-${Date.now()}`,
-      timestamp: 'الآن',
-      read: false,
-    };
-    setNotifications((prev) => [item, ...prev]);
   };
 
   const markNotificationAsRead = (id: string) => {
@@ -571,22 +755,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
   };
 
-  // Reset to original mock data
   const resetAllData = () => {
-    localStorage.removeItem(STORAGE_KEY);
-    setIsAuthenticated(true);
-    setOwner(INITIAL_OWNER);
-    setRestaurant(INITIAL_RESTAURANT);
     setCategories(INITIAL_CATEGORIES);
     setMenuItems(INITIAL_MENU_ITEMS);
     setOffers(INITIAL_OFFERS);
     setOrders(INITIAL_ORDERS);
     setMovements(INITIAL_MOVEMENTS);
     setNotifications(INITIAL_NOTIFICATIONS);
-    setNewOrderAlert(null);
   };
 
-  // Derived real-time statistics strictly from orders & movements!
+  // Stats
   const pendingOrdersCount = orders.filter((o) => o.status === 'PENDING').length;
   const acceptedOrdersCount = orders.filter((o) => o.status === 'ACCEPTED').length;
   const preparingOrdersCount = orders.filter((o) => o.status === 'PREPARING').length;
@@ -595,7 +773,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const rejectedOrdersCount = orders.filter((o) => o.status === 'REJECTED' || o.status === 'CANCELLED').length;
   const totalOrdersCount = orders.length;
 
-  // Financial statistics from completed orders & movements
   const completedOrders = orders.filter((o) => o.status === 'COMPLETED');
   const totalFoodSales = completedOrders.reduce((sum, o) => sum + o.subtotal, 0);
   const totalDiscounts = completedOrders.reduce((sum, o) => sum + o.discountTotal, 0);
@@ -603,15 +780,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const totalAdminCommission = completedOrders.reduce((sum, o) => sum + o.adminCommissionAmount, 0);
   const totalNetRestaurantDue = completedOrders.reduce((sum, o) => sum + o.netRestaurantDue, 0);
 
-  // Settlement calculations from financial movements
   const settledPayouts = movements
     .filter((m) => m.type === 'PARTIAL_SETTLEMENT' || m.type === 'CASH_PAYOUT')
     .reduce((sum, m) => sum + m.amount, 0);
 
-  const totalCollected = movements
-    .filter((m) => m.isCredit)
-    .reduce((sum, m) => sum + m.amount, 0);
-
+  const totalCollected = movements.filter((m) => m.isCredit).reduce((sum, m) => sum + m.amount, 0);
   const totalUnsettled = Math.max(0, totalNetRestaurantDue - settledPayouts);
 
   const stats = {
@@ -634,14 +807,28 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   return (
     <AppContext.Provider
       value={{
+        isSupabaseReady: isSupabaseConfigured,
+        authLoading,
         isAuthenticated,
+        user,
+        session,
+        userProfile,
+        isUserBanned,
+        isUserSuspended,
+        banReason,
+        hasRestaurant,
         owner,
         restaurant,
+        dbRestaurant,
         login,
+        signUp,
+        resetPassword,
         logout,
+        refreshRestaurant,
         updateOwner,
         updateRestaurant,
         setRegistrationStatus,
+        registerRestaurantReal,
         registerRestaurant,
         categories,
         menuItems,

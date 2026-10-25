@@ -11,6 +11,9 @@ import {
   CheckCircle2,
   HelpCircle,
   X,
+  Loader2,
+  AlertTriangle,
+  Info,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 
@@ -19,22 +22,35 @@ interface LoginPageProps {
 }
 
 export const LoginPage: React.FC<LoginPageProps> = ({ onGoToRegister }) => {
-  const { login, owner } = useApp();
+  const { login, resetPassword, isSupabaseReady } = useApp();
 
-  const [email, setEmail] = useState('elnahas.grill@gmail.com');
-  const [password, setPassword] = useState('123456');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
+
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+
+  // Forgot password modal
   const [showForgotModal, setShowForgotModal] = useState(false);
   const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotLoading, setForgotLoading] = useState(false);
   const [forgotSubmitted, setForgotSubmitted] = useState(false);
+  const [forgotError, setForgotError] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
     setSuccessMessage('');
+
+    if (!isSupabaseReady) {
+      setErrorMessage(
+        'خدمة Supabase غير مكونة بعد في بيئة التشغيل. يرجى إضافة VITE_SUPABASE_URL و VITE_SUPABASE_ANON_KEY.'
+      );
+      return;
+    }
 
     if (!email.trim() || !email.includes('@')) {
       setErrorMessage('يرجى إدخال بريد إلكتروني صالح.');
@@ -45,29 +61,47 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onGoToRegister }) => {
       return;
     }
 
-    const success = login(email, password);
-    if (success) {
-      setSuccessMessage('تم تسجيل الدخول بنجاح! جاري تحويلك إلى لوحة التحكم...');
-    } else {
-      setErrorMessage('بيانات الدخول غير صحيحة. يرجى التأكد وإعادة المحاولة.');
+    setIsLoading(true);
+    try {
+      const result = await login(email, password);
+      if (result.success) {
+        setSuccessMessage('تم تسجيل الدخول بنجاح! جاري تحويلك...');
+      } else {
+        setErrorMessage(result.error || 'فشل تسجيل الدخول. يرجى التأكد من البيانات.');
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'حدث خطأ أثناء محاولة الاتصال بخدمة المصادقة.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const handleFillDemo = () => {
-    setEmail(owner.email);
-    setPassword('123456');
-    setErrorMessage('');
-  };
-
-  const handleForgotSubmit = (e: React.FormEvent) => {
+  const handleForgotSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (forgotEmail.trim() && forgotEmail.includes('@')) {
-      setForgotSubmitted(true);
+    setForgotError('');
+
+    if (!forgotEmail.trim() || !forgotEmail.includes('@')) {
+      setForgotError('يرجى إدخال بريد إلكتروني صالح.');
+      return;
+    }
+
+    setForgotLoading(true);
+    try {
+      const result = await resetPassword(forgotEmail);
+      if (result.success) {
+        setForgotSubmitted(true);
+      } else {
+        setForgotError(result.error || 'تعذر إرسال رابط الاستعادة.');
+      }
+    } catch (err: any) {
+      setForgotError(err?.message || 'فشل إرسال طلب استعادة كلمة المرور.');
+    } finally {
+      setForgotLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-amber-950 flex items-center justify-center p-4 sm:p-6 lg:p-8">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-amber-950 flex items-center justify-center p-4 sm:p-6 lg:p-8 font-['Cairo',sans-serif]">
       <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl overflow-hidden border border-slate-100">
         {/* Top Header Banner */}
         <div className="bg-gradient-to-l from-amber-600 via-amber-500 to-amber-600 p-6 sm:p-8 text-white text-center relative">
@@ -85,9 +119,22 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onGoToRegister }) => {
           <div className="mb-6 text-center">
             <h2 className="text-lg font-bold text-slate-800">تسجيل الدخول للمطعم</h2>
             <p className="text-xs text-slate-500 mt-1">
-              أدخل بيانات حسابك للوصول إلى المنيو والطلبات والمستحقات
+              المصادقة الرسمية عبر Supabase Auth
             </p>
           </div>
+
+          {/* Missing Supabase Env Notice */}
+          {!isSupabaseReady && (
+            <div className="mb-4 p-3.5 bg-amber-50 border border-amber-300 rounded-2xl flex items-start gap-2.5 text-amber-900 text-xs leading-relaxed">
+              <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600 mt-0.5" />
+              <div>
+                <p className="font-bold">تنبيه إعدادات الاتصال:</p>
+                <p className="mt-0.5 text-amber-800 text-[11px]">
+                  يتطلب التطبيق توفير <code className="font-mono font-bold bg-amber-100 px-1 rounded">VITE_SUPABASE_URL</code> و <code className="font-mono font-bold bg-amber-100 px-1 rounded">VITE_SUPABASE_ANON_KEY</code> للاتصال الفعلي بقاعدة بيانات ومصادقة Supabase.
+                </p>
+              </div>
+            </div>
+          )}
 
           {errorMessage && (
             <div className="mb-4 p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-center gap-2 text-rose-700 text-xs font-semibold">
@@ -106,13 +153,17 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onGoToRegister }) => {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                البريد الإلكتروني
+                البريد الإلكتروني *
               </label>
               <div className="relative">
                 <input
                   type="email"
+                  required
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    setErrorMessage('');
+                  }}
                   placeholder="name@restaurant.com"
                   className="w-full pl-4 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-left dir-ltr"
                 />
@@ -122,7 +173,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onGoToRegister }) => {
 
             <div>
               <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-bold text-slate-700">كلمة المرور</label>
+                <label className="text-xs font-bold text-slate-700">كلمة المرور *</label>
                 <button
                   type="button"
                   onClick={() => setShowForgotModal(true)}
@@ -134,8 +185,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onGoToRegister }) => {
               <div className="relative">
                 <input
                   type={showPassword ? 'text' : 'password'}
+                  required
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    setErrorMessage('');
+                  }}
                   placeholder="••••••••"
                   className="w-full pl-10 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 focus:bg-white transition-all text-left dir-ltr"
                 />
@@ -158,32 +213,28 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onGoToRegister }) => {
                   onChange={(e) => setRememberMe(e.target.checked)}
                   className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 border-slate-300"
                 />
-                <span>تذكر تسجيل الدخول على هذا الجهاز</span>
+                <span>تذكر تسجيل الدخول</span>
               </label>
             </div>
 
             <button
               type="submit"
-              className="w-full mt-2 py-3 px-4 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 text-slate-950 font-black rounded-xl shadow-md shadow-amber-500/20 flex items-center justify-center gap-2 transition-all cursor-pointer"
+              disabled={isLoading}
+              className="w-full mt-2 py-3 px-4 bg-amber-500 hover:bg-amber-600 active:bg-amber-700 disabled:opacity-60 text-slate-950 font-black rounded-xl shadow-md shadow-amber-500/20 flex items-center justify-center gap-2 transition-all cursor-pointer"
             >
-              <LogIn className="w-4 h-4" />
-              <span>تسجيل الدخول</span>
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>جاري تسجيل الدخول...</span>
+                </>
+              ) : (
+                <>
+                  <LogIn className="w-4 h-4" />
+                  <span>تسجيل الدخول</span>
+                </>
+              )}
             </button>
           </form>
-
-          {/* Quick Demo Pre-fill */}
-          <div className="mt-4 p-3 bg-amber-50/80 rounded-xl border border-amber-200/80 text-center">
-            <p className="text-xs text-amber-800 mb-1.5 font-medium">
-              حساب تجريبي جاهز للفحص الفوري:
-            </p>
-            <button
-              type="button"
-              onClick={handleFillDemo}
-              className="text-xs font-bold text-amber-700 hover:text-amber-900 bg-white px-3 py-1.5 rounded-lg border border-amber-300 shadow-2xs hover:bg-amber-100/50 transition-all inline-flex items-center gap-1.5"
-            >
-              <span>تعبئة بيانات مشويات النحاس التجريبية</span>
-            </button>
-          </div>
 
           {/* Create new account link */}
           <div className="mt-6 pt-5 border-t border-slate-100 text-center">
@@ -209,6 +260,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onGoToRegister }) => {
               onClick={() => {
                 setShowForgotModal(false);
                 setForgotSubmitted(false);
+                setForgotError('');
               }}
               className="absolute left-4 top-4 p-1 text-slate-400 hover:text-slate-600 rounded-lg"
             >
@@ -221,24 +273,30 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onGoToRegister }) => {
 
             <h3 className="text-base font-bold text-slate-900 mb-1">استعادة كلمة المرور</h3>
             <p className="text-xs text-slate-500 mb-4 leading-relaxed">
-              أدخل البريد الإلكتروني المسجل وسنرسل لك رابط إعادة تعيين كلمة المرور فورًا.
+              أدخل البريد الإلكتروني وسيرسل Supabase Auth رابط تعيين كلمة المرور إلى بريدك.
             </p>
+
+            {forgotError && (
+              <div className="mb-3 p-2.5 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs font-bold">
+                {forgotError}
+              </div>
+            )}
 
             {forgotSubmitted ? (
               <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs font-semibold space-y-1">
                 <p className="flex items-center gap-1.5 font-bold">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  تم إرسال رابط الاستعادة تجريبيًا!
+                  تم إرسال رابط الاستعادة بنجاح!
                 </p>
                 <p className="text-[11px] text-emerald-700">
-                  تفقّد بريدك الإلكتروني {forgotEmail} لإتمام التعيين.
+                  تفقّد صندوق الوارد في {forgotEmail} لإعادة التعيين.
                 </p>
               </div>
             ) : (
               <form onSubmit={handleForgotSubmit} className="space-y-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
-                    البريد الإلكتروني
+                    البريد الإلكتروني المسجل
                   </label>
                   <input
                     type="email"
@@ -246,14 +304,16 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onGoToRegister }) => {
                     value={forgotEmail}
                     onChange={(e) => setForgotEmail(e.target.value)}
                     placeholder="name@restaurant.com"
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 text-left dir-ltr"
                   />
                 </div>
                 <button
                   type="submit"
-                  className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 font-bold text-slate-950 text-xs rounded-xl shadow-xs transition-colors"
+                  disabled={forgotLoading}
+                  className="w-full py-2.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-60 font-bold text-slate-950 text-xs rounded-xl shadow-xs transition-colors flex items-center justify-center gap-1.5"
                 >
-                  إرسال رابط الاستعادة
+                  {forgotLoading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>إرسال رابط الاستعادة</span>
                 </button>
               </form>
             )}
