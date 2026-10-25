@@ -1,0 +1,6 @@
+{
+  "name": "تطبيق المطاعم — طلبات البيت",
+  "description": "لوحة تحكم وتطبيق إدارة المطاعم الشريكة لمنظومة طلبات البيت — إدارة المنيو والطلبات والعروض والحسابات المالية.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
