@@ -89,8 +89,27 @@ export const OffersView: React.FC = () => {
       <div className="space-y-3">
         <h3 className="text-xs font-bold text-slate-700">قائمة العروض المسجلة للمطعم:</h3>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {offers.map((offer) => {
+        {offers.length === 0 ? (
+          <div className="bg-white rounded-2xl p-12 text-center border border-slate-200 shadow-xs">
+            <Sparkles className="w-12 h-12 text-slate-300 mx-auto mb-3 stroke-[1.5]" />
+            <h4 className="text-sm font-bold text-slate-700">لا توجد عروض ترويجية مسجلة حاليًا</h4>
+            <p className="text-xs text-slate-400 mt-1 mb-4">
+              أنشئ أول عرض لزيادة مبيعات مطعمك ولفت انتباه زبائن تطبيق طلبات البيت عبر سلايدر العروض الترويجية.
+            </p>
+            <button
+              onClick={() => {
+                setOfferToEdit(null);
+                setShowModal(true);
+              }}
+              className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs rounded-xl shadow-xs inline-flex items-center gap-1.5 cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>إضافة أول عرض الآن</span>
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {offers.map((offer) => {
             const isPct = offer.discountType === 'PERCENTAGE';
             const appliesCount = offer.appliesToItemIds.length;
             return (
@@ -191,7 +210,8 @@ export const OffersView: React.FC = () => {
             );
           })}
         </div>
-      </div>
+      )}
+    </div>
 
       {/* Financial Rule clarification */}
       <div className="p-4 bg-amber-50/80 rounded-2xl border border-amber-200 text-xs text-slate-800 space-y-1.5">

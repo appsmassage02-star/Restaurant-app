@@ -1,5 +1,6 @@
 /**
- * واجهات وتعاريف جداول قاعدة بيانات Supabase لمنظومة طلبات البيت
+ * واجهات وتعاريف جداول قاعدة بيانات Supabase الفعلية لمنظومة طلبات البيت
+ * تم التحقق من المخطط الفعلي للأعمدة عبر قاعدة البيانات
  */
 
 export interface DbProfile {
@@ -17,71 +18,77 @@ export interface DbProfile {
 }
 
 export interface FoodGovernorate {
-  id: string | number;
-  name: string;
-  name_ar?: string | null;
+  id: string; // uuid
+  country_name?: string | null;
+  name_ar: string; // اسم المحافظة بالعربية
+  name_en?: string | null;
+  code?: string | null;
   is_active?: boolean;
+  sort_order?: number | null;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface FoodCenter {
-  id: string | number;
-  governorate_id: string | number;
-  name: string;
-  name_ar?: string | null;
+  id: string; // uuid
+  governorate_id: string; // uuid
+  name_ar: string; // اسم المركز/المدينة بالعربية
+  name_en?: string | null;
   is_active?: boolean;
+  sort_order?: number | null;
+  source_code?: string | null;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface FoodArea {
-  id: string | number;
-  center_id: string | number;
-  name: string;
-  name_ar?: string | null;
+  id: string; // uuid
+  governorate_id?: string | null; // uuid
+  center_id: string; // uuid
+  name_ar: string; // اسم المنطقة/الحي بالعربية
+  name_en?: string | null;
   is_active?: boolean;
+  sort_order?: number | null;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export interface RestaurantCategory {
-  id: string | number;
-  name: string;
-  name_ar?: string | null;
+  id: string; // uuid
+  name: string; // اسم التصنيف (مثل: مطعم مشويات، حلويات...)
   description?: string | null;
   image_url?: string | null;
   is_active?: boolean;
+  sort_order?: number | null;
+  created_at?: string;
 }
 
 export interface RestaurantCategoryLink {
-  id?: string | number;
-  restaurant_id: string;
-  category_id: string | number;
+  restaurant_id: string; // uuid
+  category_id: string; // uuid
 }
 
 export interface DbRestaurant {
-  id: string;
-  owner_user_id: string;
+  id: string; // uuid
+  owner_user_id: string; // uuid (auth.uid)
   name: string;
   description?: string | null;
   phone?: string | null;
   address?: string | null;
+  detailed_address?: string | null;
   latitude?: number | null;
   longitude?: number | null;
-  governorate_id?: string | number | null;
-  center_id?: string | number | null;
-  area_id?: string | number | null;
-  logo_url?: string | null;
-  image_url?: string | null;
-  cover_image_url?: string | null;
-  status?: 'pending' | 'approved' | 'rejected' | 'active' | 'suspended' | string;
-  is_active?: boolean;
-  is_open?: boolean;
-  opening_hours?: string | null;
-  holidays?: string | null;
-  admin_commission_percent?: number | null;
-  commission_rate?: number | null;
+  governorate_id?: string | null; // uuid
+  center_id?: string | null; // uuid
+  area_id?: string | null; // uuid
+  image_url?: string | null; // صورة المطعم
+  is_active?: boolean; // حالة تفعيل المطعم من الإدارة
+  is_open?: boolean; // حالة فتح/إغلاق المطعم لاستقبال الطلبات
   delivery_fee?: number | null;
-  rejection_reason?: string | null;
   created_at?: string;
   updated_at?: string;
 
-  // Joined relations
+  // العلاقات المحملة
   governorate?: FoodGovernorate | null;
   center?: FoodCenter | null;
   area?: FoodArea | null;
@@ -91,15 +98,15 @@ export interface DbRestaurant {
 export interface CreateRestaurantPayload {
   owner_user_id: string;
   name: string;
-  description: string;
+  description?: string;
   phone: string;
   address: string;
-  latitude?: number;
-  longitude?: number;
-  governorate_id: string | number;
-  center_id: string | number;
-  area_id?: string | number | null;
-  logo_url?: string;
-  cover_image_url?: string;
-  category_ids?: (string | number)[];
+  detailed_address?: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  governorate_id: string;
+  center_id: string;
+  area_id?: string | null;
+  image_url?: string | null;
+  category_ids?: string[];
 }

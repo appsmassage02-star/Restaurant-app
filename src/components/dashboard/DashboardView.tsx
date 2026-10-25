@@ -217,56 +217,70 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700">
-              {recentOrders.map((ord) => (
-                <tr key={ord.id} className="hover:bg-slate-50/80 transition-colors">
-                  <td className="py-3.5 px-4 font-mono font-bold text-slate-900">
-                    #{ord.orderNumber}
-                    <span className="block text-[10px] text-slate-400 font-sans font-normal">
-                      {new Date(ord.createdAt).toLocaleTimeString('ar-EG', {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </span>
-                  </td>
-                  <td className="py-3.5 px-4">
-                    <p className="font-bold text-slate-900">{ord.customer.name}</p>
-                    <p className="text-[11px] text-slate-500 truncate max-w-xs">
-                      {ord.customer.address}
-                    </p>
-                  </td>
-                  <td className="py-3.5 px-4">
-                    {ord.route === 'SELF_DELIVERY' ? (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-800 font-medium text-[11px] border border-emerald-200">
-                        <Truck className="w-3 h-3 text-emerald-600" />
-                        توصيل ذاتي (إلكتروني)
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-blue-50 text-blue-800 font-medium text-[11px] border border-blue-200">
-                        <PhoneCall className="w-3 h-3 text-blue-600" />
-                        مندوب (اتصال هاتفي)
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-3.5 px-4">
-                    <span className="font-black text-slate-900">
-                      {ord.grandTotal.toLocaleString('ar-EG')} ج.م
-                    </span>
-                    <span className="block text-[10px] text-slate-400">
-                      صافي المطعم: {ord.netRestaurantDue.toLocaleString('ar-EG')} ج.م
-                    </span>
-                  </td>
-                  <td className="py-3.5 px-4">{getStatusBadge(ord.status)}</td>
-                  <td className="py-3.5 px-4 text-center">
-                    <button
-                      onClick={() => onOpenOrderDetails(ord)}
-                      className="px-3 py-1.5 bg-slate-100 hover:bg-amber-100 text-slate-700 hover:text-amber-900 rounded-lg font-bold text-xs transition-colors inline-flex items-center gap-1"
-                    >
-                      <Eye className="w-3.5 h-3.5" />
-                      <span>التفاصيل</span>
-                    </button>
+              {recentOrders.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-12 text-center">
+                    <div className="flex flex-col items-center justify-center text-slate-400">
+                      <ShoppingBag className="w-12 h-12 stroke-[1.5] text-slate-300 mb-3" />
+                      <p className="text-sm font-bold text-slate-700">لا توجد طلبات واردة حتى الآن</p>
+                      <p className="text-xs text-slate-400 mt-1">
+                        ستظهر أحدث طلبات الزبائن وتفاصيل التوصيل الذاتي والمندوب هنا فور تسجيلها.
+                      </p>
+                    </div>
                   </td>
                 </tr>
-              ))}
+              ) : (
+                recentOrders.map((ord) => (
+                  <tr key={ord.id} className="hover:bg-slate-50/80 transition-colors">
+                    <td className="py-3.5 px-4 font-mono font-bold text-slate-900">
+                      #{ord.orderNumber}
+                      <span className="block text-[10px] text-slate-400 font-sans font-normal">
+                        {new Date(ord.createdAt).toLocaleTimeString('ar-EG', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </span>
+                    </td>
+                    <td className="py-3.5 px-4">
+                      <p className="font-bold text-slate-900">{ord.customer.name}</p>
+                      <p className="text-[11px] text-slate-500 truncate max-w-xs">
+                        {ord.customer.address}
+                      </p>
+                    </td>
+                    <td className="py-3.5 px-4">
+                      {ord.route === 'SELF_DELIVERY' ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-emerald-50 text-emerald-800 font-medium text-[11px] border border-emerald-200">
+                          <Truck className="w-3 h-3 text-emerald-600" />
+                          توصيل ذاتي (إلكتروني)
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-blue-50 text-blue-800 font-medium text-[11px] border border-blue-200">
+                          <PhoneCall className="w-3 h-3 text-blue-600" />
+                          مندوب (اتصال هاتفي)
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-3.5 px-4">
+                      <span className="font-black text-slate-900">
+                        {ord.grandTotal.toLocaleString('ar-EG')} ج.م
+                      </span>
+                      <span className="block text-[10px] text-slate-400">
+                        صافي المطعم: {ord.netRestaurantDue.toLocaleString('ar-EG')} ج.م
+                      </span>
+                    </td>
+                    <td className="py-3.5 px-4">{getStatusBadge(ord.status)}</td>
+                    <td className="py-3.5 px-4 text-center">
+                      <button
+                        onClick={() => onOpenOrderDetails(ord)}
+                        className="px-3 py-1.5 bg-slate-100 hover:bg-amber-100 text-slate-700 hover:text-amber-900 rounded-lg font-bold text-xs transition-colors inline-flex items-center gap-1"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>التفاصيل</span>
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

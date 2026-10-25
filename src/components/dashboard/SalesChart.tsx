@@ -6,37 +6,65 @@ export const SalesChart: React.FC = () => {
   const { stats } = useApp();
   const [period, setPeriod] = useState<'TODAY' | 'WEEK' | 'MONTH'>('WEEK');
 
-  // Realistic mock series adjusted relative to current live orders
-  const baseSales = stats.netFoodSales || 1800;
+  const hasSalesData = stats.totalOrdersCount > 0 && stats.netFoodSales > 0;
+  const baseSales = stats.netFoodSales;
 
   const dataSets = {
     TODAY: [
-      { label: '12:00 م', sales: Math.round(baseSales * 0.2), orders: 2 },
-      { label: '02:00 م', sales: Math.round(baseSales * 0.35), orders: 4 },
-      { label: '04:00 م', sales: Math.round(baseSales * 0.15), orders: 1 },
-      { label: '06:00 م', sales: Math.round(baseSales * 0.4), orders: 5 },
-      { label: '08:00 م', sales: Math.round(baseSales * 0.6), orders: 6 },
-      { label: '10:00 م', sales: Math.round(baseSales * 0.3), orders: 3 },
+      { label: '12:00 م', sales: Math.round(baseSales * 0.2), orders: Math.max(1, Math.round(stats.completedOrdersCount * 0.2)) },
+      { label: '02:00 م', sales: Math.round(baseSales * 0.35), orders: Math.max(1, Math.round(stats.completedOrdersCount * 0.35)) },
+      { label: '04:00 م', sales: Math.round(baseSales * 0.15), orders: Math.max(1, Math.round(stats.completedOrdersCount * 0.15)) },
+      { label: '06:00 م', sales: Math.round(baseSales * 0.4), orders: Math.max(1, Math.round(stats.completedOrdersCount * 0.4)) },
+      { label: '08:00 م', sales: Math.round(baseSales * 0.6), orders: Math.max(1, Math.round(stats.completedOrdersCount * 0.6)) },
+      { label: '10:00 م', sales: Math.round(baseSales * 0.3), orders: Math.max(1, Math.round(stats.completedOrdersCount * 0.3)) },
     ],
     WEEK: [
-      { label: 'السبت', sales: Math.round(baseSales * 0.8), orders: 9 },
-      { label: 'الأحد', sales: Math.round(baseSales * 0.65), orders: 7 },
-      { label: 'الإثنين', sales: Math.round(baseSales * 0.9), orders: 11 },
-      { label: 'الثلاثاء', sales: Math.round(baseSales * 0.75), orders: 8 },
-      { label: 'الأربعاء', sales: Math.round(baseSales * 0.85), orders: 10 },
-      { label: 'الخميس', sales: Math.round(baseSales * 1.3), orders: 16 },
-      { label: 'الجمعة', sales: Math.round(baseSales * 1.5), orders: 19 },
+      { label: 'السبت', sales: Math.round(baseSales * 0.15), orders: Math.round(stats.completedOrdersCount * 0.15) },
+      { label: 'الأحد', sales: Math.round(baseSales * 0.12), orders: Math.round(stats.completedOrdersCount * 0.12) },
+      { label: 'الإثنين', sales: Math.round(baseSales * 0.14), orders: Math.round(stats.completedOrdersCount * 0.14) },
+      { label: 'الثلاثاء', sales: Math.round(baseSales * 0.13), orders: Math.round(stats.completedOrdersCount * 0.13) },
+      { label: 'الأربعاء', sales: Math.round(baseSales * 0.14), orders: Math.round(stats.completedOrdersCount * 0.14) },
+      { label: 'الخميس', sales: Math.round(baseSales * 0.18), orders: Math.round(stats.completedOrdersCount * 0.18) },
+      { label: 'الجمعة', sales: Math.round(baseSales * 0.14), orders: Math.round(stats.completedOrdersCount * 0.14) },
     ],
     MONTH: [
-      { label: 'الأسبوع 1', sales: Math.round(baseSales * 3.8), orders: 45 },
-      { label: 'الأسبوع 2', sales: Math.round(baseSales * 4.2), orders: 52 },
-      { label: 'الأسبوع 3', sales: Math.round(baseSales * 3.9), orders: 48 },
-      { label: 'الأسبوع 4', sales: Math.round(baseSales * 4.6), orders: 60 },
+      { label: 'الأسبوع 1', sales: Math.round(baseSales * 0.22), orders: Math.round(stats.completedOrdersCount * 0.22) },
+      { label: 'الأسبوع 2', sales: Math.round(baseSales * 0.26), orders: Math.round(stats.completedOrdersCount * 0.26) },
+      { label: 'الأسبوع 3', sales: Math.round(baseSales * 0.24), orders: Math.round(stats.completedOrdersCount * 0.24) },
+      { label: 'الأسبوع 4', sales: Math.round(baseSales * 0.28), orders: Math.round(stats.completedOrdersCount * 0.28) },
     ],
   };
 
   const currentData = dataSets[period];
-  const maxSales = Math.max(...currentData.map((d) => d.sales), 100);
+  const maxSales = Math.max(...currentData.map((d) => d.sales), 10);
+
+  if (!hasSalesData) {
+    return (
+      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs text-center">
+        <div className="flex items-center justify-between mb-4 text-right">
+          <div>
+            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+              <BarChart3 className="w-4 h-4 text-amber-500" />
+              أداء المبيعات والطلبات خلال الفترة
+            </h3>
+            <p className="text-xs text-slate-400 mt-0.5">
+              متابعة حركة الإيرادات اليومية وتوزيع أوقات الذروة
+            </p>
+          </div>
+        </div>
+
+        <div className="py-10 flex flex-col items-center justify-center text-slate-400">
+          <div className="p-3 bg-amber-50 rounded-2xl mb-3 text-amber-600">
+            <TrendingUp className="w-8 h-8 stroke-[1.5]" />
+          </div>
+          <h4 className="text-sm font-bold text-slate-700">لا توجد مبيعات مكتملة حتى الآن</h4>
+          <p className="text-xs text-slate-400 mt-1 max-w-sm">
+            ستظهر الرسوم البيانية ومؤشرات الأداء وتوزيع المبيعات تلقائيًا عند استقبال واكتمال أولى طلبات الزبائن.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
@@ -120,8 +148,8 @@ export const SalesChart: React.FC = () => {
             <span>متوسط قيمة الطلب: </span>
             <span className="font-bold text-slate-700">
               {stats.completedOrdersCount > 0
-                ? Math.round(stats.netFoodSales / stats.completedOrdersCount)
-                : 280}{' '}
+                ? Math.round(stats.netFoodSales / stats.completedOrdersCount).toLocaleString('ar-EG')
+                : 0}{' '}
               ج.م
             </span>
           </div>

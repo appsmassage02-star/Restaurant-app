@@ -180,13 +180,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [restaurant, setRestaurant] = useState<RestaurantProfile>(EMPTY_RESTAURANT);
   const [owner, setOwner] = useState<RestaurantOwner>(EMPTY_OWNER);
 
-  // Operational states (prepared for subsequent phases)
-  const [categories, setCategories] = useState<MenuCategory[]>(INITIAL_CATEGORIES);
-  const [menuItems, setMenuItems] = useState<MenuItem[]>(INITIAL_MENU_ITEMS);
-  const [offers, setOffers] = useState<Offer[]>(INITIAL_OFFERS);
-  const [orders, setOrders] = useState<Order[]>(INITIAL_ORDERS);
-  const [movements, setMovements] = useState<FinancialMovement[]>(INITIAL_MOVEMENTS);
-  const [notifications, setNotifications] = useState<AppNotification[]>(INITIAL_NOTIFICATIONS);
+  // Operational states: Start empty (no fake mock data presented as real database records)
+  const [categories, setCategories] = useState<MenuCategory[]>([]);
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [offers, setOffers] = useState<Offer[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [movements, setMovements] = useState<FinancialMovement[]>([]);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [newOrderAlert, setNewOrderAlert] = useState<Order | null>(null);
 
   const isAuthenticated = Boolean(session && user);
@@ -219,42 +219,34 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Convert DbRestaurant to RestaurantProfile format
   const mapDbRestaurantToProfile = useCallback(
     (db: DbRestaurant, ownerEmail: string, ownerName: string): RestaurantProfile => {
-      let regStatus: RegistrationStatus = 'PENDING';
-      const rawStatus = (db.status || '').toLowerCase();
-      if (rawStatus === 'approved' || rawStatus === 'active') {
-        regStatus = 'APPROVED';
-      } else if (rawStatus === 'rejected') {
-        regStatus = 'REJECTED';
-      } else {
-        regStatus = 'PENDING';
-      }
+      // In the database, is_active indicates whether admin has approved/activated the restaurant
+      const regStatus: RegistrationStatus = db.is_active ? 'APPROVED' : 'PENDING';
 
       return {
         id: db.id,
         name: db.name || 'بدون اسم',
         description: db.description || '',
         phone: db.phone || '',
-        logo: db.logo_url || EMPTY_RESTAURANT.logo,
-        coverImage: db.cover_image_url || db.image_url || EMPTY_RESTAURANT.coverImage,
+        logo: db.image_url || EMPTY_RESTAURANT.logo,
+        coverImage: db.image_url || EMPTY_RESTAURANT.coverImage,
         address: db.address || '',
-        governorate: db.governorate?.name || 'غير محدد',
-        city: db.center?.name || db.area?.name || 'غير محدد',
-        governorateId: db.governorate_id,
-        centerId: db.center_id,
-        areaId: db.area_id,
+        governorate: db.governorate?.name_ar || 'غير محدد',
+        city: db.center?.name_ar || db.area?.name_ar || 'غير محدد',
+        governorateId: db.governorate_id || undefined,
+        centerId: db.center_id || undefined,
+        areaId: db.area_id || undefined,
         latitude: db.latitude || 31.0409,
         longitude: db.longitude || 31.3785,
         deliveryRadiusKm: 6.0,
         maxAllowedRadiusKm: 12.0,
         deliveryFee: db.delivery_fee ?? 25.0,
         isOpen: db.is_open ?? false,
-        openingHours: db.opening_hours || '10:00 ص - 01:00 ص',
-        holidays: db.holidays || 'يعمل طوال الأسبوع',
-        adminCommissionPercent: db.admin_commission_percent ?? 10,
+        openingHours: '10:00 ص - 01:00 ص',
+        holidays: 'يعمل طوال الأسبوع',
+        adminCommissionPercent: 10,
         settlementPeriod: 'WEEKLY',
         registrationStatus: regStatus,
         registrationDate: db.created_at || new Date().toISOString(),
-        rejectionReason: db.rejection_reason || undefined,
         rawDbRestaurant: db,
       };
     },
@@ -493,6 +485,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setDbRestaurant(null);
     setRestaurant(EMPTY_RESTAURANT);
     setOwner(EMPTY_OWNER);
+    setCategories([]);
+    setMenuItems([]);
+    setOffers([]);
+    setOrders([]);
+    setMovements([]);
+    setNotifications([]);
   };
 
   const refreshRestaurant = async () => {
@@ -531,11 +529,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       address: restData.address || '',
       latitude: restData.latitude,
       longitude: restData.longitude,
-      governorate_id: restData.governorateId || 1,
-      center_id: restData.centerId || 1,
-      area_id: restData.areaId,
-      logo_url: restData.logo,
-      cover_image_url: restData.coverImage,
+      governorate_id: String(restData.governorateId || ''),
+      center_id: String(restData.centerId || ''),
+      area_id: restData.areaId ? String(restData.areaId) : null,
+      image_url: restData.logo,
     };
 
     return await registerRestaurantReal(payload);
@@ -756,12 +753,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const resetAllData = () => {
-    setCategories(INITIAL_CATEGORIES);
-    setMenuItems(INITIAL_MENU_ITEMS);
-    setOffers(INITIAL_OFFERS);
-    setOrders(INITIAL_ORDERS);
-    setMovements(INITIAL_MOVEMENTS);
-    setNotifications(INITIAL_NOTIFICATIONS);
+    setCategories([]);
+    setMenuItems([]);
+    setOffers([]);
+    setOrders([]);
+    setMovements([]);
+    setNotifications([]);
   };
 
   // Stats

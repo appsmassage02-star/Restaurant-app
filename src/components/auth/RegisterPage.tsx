@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Store,
   User,
@@ -19,8 +19,10 @@ import {
   ShieldAlert,
   AlertTriangle,
   Info,
+  RefreshCw,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import { LocationPickerMap } from '../common/LocationPickerMap';
 import {
   fetchGovernorates,
   fetchCenters,
@@ -78,8 +80,8 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
   const [restaurantPhone, setRestaurantPhone] = useState('');
   const [detailedAddress, setDetailedAddress] = useState('');
   const [logoUrl, setLogoUrl] = useState('https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=400&auto=format&fit=crop&q=80');
-  const [latitude, setLatitude] = useState(31.0409);
-  const [longitude, setLongitude] = useState(31.3785);
+  const [latitude, setLatitude] = useState<number | null>(null);
+  const [longitude, setLongitude] = useState<number | null>(null);
 
   // Dynamic Geographic state
   const [governorates, setGovernorates] = useState<FoodGovernorate[]>([]);
@@ -93,6 +95,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
   const [selectedAreaId, setSelectedAreaId] = useState<string | number>('');
 
   const [loadingGovs, setLoadingGovs] = useState(false);
+  const [govError, setGovError] = useState<string | null>(null);
   const [loadingCenters, setLoadingCenters] = useState(false);
   const [loadingAreas, setLoadingAreas] = useState(false);
 
@@ -101,40 +104,38 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
   const [agreedCommission, setAgreedCommission] = useState(false);
 
   // Load Governorates and Categories from Supabase on mount
-  useEffect(() => {
-    let isMounted = true;
-
-    async function loadInitialData() {
-      setLoadingGovs(true);
+  const loadInitialData = useCallback(async () => {
+    setLoadingGovs(true);
+    setGovError(null);
+    try {
       const [govsRes, catsRes] = await Promise.all([
         fetchGovernorates(),
         fetchRestaurantCategories(),
       ]);
 
-      if (isMounted) {
-        if (govsRes.data.length > 0) {
-          setGovernorates(govsRes.data);
-          setSelectedGovId(govsRes.data[0].id);
-        } else if (govsRes.error) {
-          console.warn('Governorates fetch message:', govsRes.error);
-        }
-
-        if (catsRes.data.length > 0) {
-          setCategories(catsRes.data);
-          setSelectedCategoryIds([catsRes.data[0].id]);
-        }
-        setLoadingGovs(false);
+      if (govsRes.data.length > 0) {
+        setGovernorates(govsRes.data);
+        setSelectedGovId((prev) => (prev ? prev : govsRes.data[0].id));
+      } else if (govsRes.error) {
+        setGovError(govsRes.error);
       }
+
+      if (catsRes.data.length > 0) {
+        setCategories(catsRes.data);
+        setSelectedCategoryIds((prev) => (prev.length > 0 ? prev : [catsRes.data[0].id]));
+      }
+    } catch (err: any) {
+      setGovError(err?.message || 'تعذر جلب المحافظات من الخادم.');
+    } finally {
+      setLoadingGovs(false);
     }
-
-    loadInitialData();
-
-    return () => {
-      isMounted = false;
-    };
   }, []);
 
-  // When Governorates change, fetch sequential Centers from food_centers
+  useEffect(() => {
+    loadInitialData();
+  }, [loadInitialData]);
+
+  // When Governorates change, reset dependent dropdowns and fetch sequential Centers from food_centers
   useEffect(() => {
     let isMounted = true;
     if (!selectedGovId) {
@@ -145,9 +146,14 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
       return;
     }
 
+    setCenters([]);
+    setSelectedCenterId('');
+    setAreas([]);
+    setSelectedAreaId('');
+
     async function loadCenters() {
       setLoadingCenters(true);
-      const res = await fetchCenters(selectedGovId);
+      const res = await fetchCenters(String(selectedGovId));
       if (isMounted) {
         setCenters(res.data);
         if (res.data.length > 0) {
@@ -168,7 +174,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
     };
   }, [selectedGovId]);
 
-  // When Center changes, fetch sequential Areas from food_areas
+  // When Center changes, reset dependent areas and fetch sequential Areas from food_areas
   useEffect(() => {
     let isMounted = true;
     if (!selectedCenterId) {
@@ -177,16 +183,14 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
       return;
     }
 
+    setAreas([]);
+    setSelectedAreaId('');
+
     async function loadAreas() {
       setLoadingAreas(true);
-      const res = await fetchAreas(selectedCenterId);
+      const res = await fetchAreas(String(selectedCenterId));
       if (isMounted) {
         setAreas(res.data);
-        if (res.data.length > 0) {
-          setSelectedAreaId(res.data[0].id);
-        } else {
-          setSelectedAreaId('');
-        }
         setLoadingAreas(false);
       }
     }
@@ -225,6 +229,12 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
     if (!selectedGovId) return 'يرجى اختيار المحافظة المعتمدة من القائمة.';
     if (!selectedCenterId && centers.length > 0) return 'يرجى اختيار المركز أو المدينة التابعة.';
     if (!detailedAddress.trim()) return 'يرجى كتابة العنوان التفصيلي بدقة.';
+    if (latitude === null || longitude === null || isNaN(latitude) || isNaN(longitude)) {
+      return 'يرجى تحديد موقع المطعم على الخريطة أو النقر على زر (موقعي الحالي GPS).';
+    }
+    if (latitude < 21 || latitude > 33 || longitude < 24 || longitude > 38) {
+      return 'الإحداثيات المحددة تقع خارج النطاق الجغرافي لجمهورية مصر العربية. يرجى ضبط النقطة على الخريطة.';
+    }
     return null;
   };
 
@@ -290,13 +300,13 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
       description: restaurantDesc.trim(),
       phone: restaurantPhone.trim(),
       address: detailedAddress.trim(),
-      latitude,
-      longitude,
-      governorate_id: selectedGovId,
-      center_id: selectedCenterId,
-      area_id: selectedAreaId || null,
-      logo_url: logoUrl.trim() || undefined,
-      category_ids: selectedCategoryIds,
+      latitude: latitude ?? 30.0444,
+      longitude: longitude ?? 31.2357,
+      governorate_id: String(selectedGovId),
+      center_id: String(selectedCenterId),
+      area_id: selectedAreaId ? String(selectedAreaId) : null,
+      image_url: logoUrl.trim() || undefined,
+      category_ids: selectedCategoryIds.map(String),
     };
 
     try {
@@ -325,9 +335,13 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
     }
   };
 
-  const selectedGovName = governorates.find((g) => String(g.id) === String(selectedGovId))?.name || '';
-  const selectedCenterName = centers.find((c) => String(c.id) === String(selectedCenterId))?.name || '';
-  const selectedAreaName = areas.find((a) => String(a.id) === String(selectedAreaId))?.name || '';
+  const selectedGov = governorates.find((g) => String(g.id) === String(selectedGovId));
+  const selectedCenter = centers.find((c) => String(c.id) === String(selectedCenterId));
+  const selectedArea = areas.find((a) => String(a.id) === String(selectedAreaId));
+
+  const selectedGovName = selectedGov?.name_ar || (selectedGov as any)?.name || '';
+  const selectedCenterName = selectedCenter?.name_ar || (selectedCenter as any)?.name || '';
+  const selectedAreaName = selectedArea?.name_ar || (selectedArea as any)?.name || '';
 
   return (
     <div className="min-h-screen bg-slate-900 py-8 px-4 sm:px-6 lg:px-8 flex items-center justify-center font-['Cairo',sans-serif]">
@@ -589,9 +603,34 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
 
               {/* Sequential Dynamic Geographic Dropdowns */}
               <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
-                <span className="text-xs font-bold text-slate-800 block">
-                  نطاق الخدمة الجغرافي المعتمد:
-                </span>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-800 block">
+                    نطاق الخدمة الجغرافي المعتمد:
+                  </span>
+                  {govError && (
+                    <button
+                      type="button"
+                      onClick={loadInitialData}
+                      className="text-xs text-amber-700 hover:text-amber-800 font-bold flex items-center gap-1 cursor-pointer"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>إعادة محاولة جلب المحافظات</span>
+                    </button>
+                  )}
+                </div>
+
+                {govError && (
+                  <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl flex items-center justify-between text-xs text-rose-800">
+                    <span>{govError}</span>
+                    <button
+                      type="button"
+                      onClick={loadInitialData}
+                      className="px-2 py-1 bg-rose-100 hover:bg-rose-200 text-rose-900 rounded font-bold cursor-pointer"
+                    >
+                      إعادة المحاولة
+                    </button>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   {/* Governorate */}
@@ -605,12 +644,14 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
                       disabled={loadingGovs}
                       className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-amber-500"
                     >
-                      {governorates.length === 0 ? (
-                        <option value="">لا توجد محافظات</option>
+                      {loadingGovs ? (
+                        <option value="">جاري تحميل المحافظات المعتمدة...</option>
+                      ) : governorates.length === 0 ? (
+                        <option value="">لا توجد محافظات متاحة</option>
                       ) : (
                         governorates.map((g) => (
                           <option key={g.id} value={g.id}>
-                            {g.name}
+                            {g.name_ar || (g as any).name}
                           </option>
                         ))
                       )}
@@ -635,7 +676,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
                       ) : (
                         centers.map((c) => (
                           <option key={c.id} value={c.id}>
-                            {c.name}
+                            {c.name_ar || (c as any).name}
                           </option>
                         ))
                       )}
@@ -658,11 +699,14 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
                           {loadingAreas ? 'جاري التحميل...' : 'المركز بأكمله أو غير محدد'}
                         </option>
                       ) : (
-                        areas.map((a) => (
-                          <option key={a.id} value={a.id}>
-                            {a.name}
-                          </option>
-                        ))
+                        <>
+                          <option value="">المركز بأكمله (نطاق عام)</option>
+                          {areas.map((a) => (
+                            <option key={a.id} value={a.id}>
+                              {a.name_ar || (a as any).name}
+                            </option>
+                          ))}
+                        </>
                       )}
                     </select>
                   </div>
@@ -712,39 +756,18 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
                 />
               </div>
 
-              {/* Interactive Coordinates Pin */}
-              <div className="p-3.5 bg-amber-50/50 rounded-2xl border border-amber-200/80">
-                <div className="flex items-center justify-between mb-2 text-xs">
-                  <span className="font-bold text-slate-800 flex items-center gap-1.5">
-                    <Compass className="w-4 h-4 text-amber-600" />
-                    <span>إحداثيات موقع المطعم (latitude, longitude):</span>
-                  </span>
-                  <span className="font-mono text-slate-500 text-[11px]">
-                    {latitude.toFixed(4)}, {longitude.toFixed(4)}
-                  </span>
-                </div>
-
-                <div
-                  onClick={(e) => {
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const xPercent = (e.clientX - rect.left) / rect.width;
-                    const yPercent = (e.clientY - rect.top) / rect.height;
-                    setLatitude(31.0 + yPercent * 0.1);
-                    setLongitude(31.3 + xPercent * 0.15);
-                  }}
-                  className="relative h-28 bg-gradient-to-tr from-slate-200 via-amber-100 to-emerald-100 rounded-xl overflow-hidden cursor-crosshair border border-slate-300 flex items-center justify-center select-none"
-                  title="انقر لتعديل إحداثيات الموقع"
-                >
-                  <div className="text-center text-[11px] text-slate-600 z-10 bg-white/75 backdrop-blur-xs px-3 py-1 rounded-full shadow-2xs">
-                    انقر على الخريطة لتثبيت إحداثيات المطعم
-                  </div>
-                  <div className="absolute transform -translate-x-1/2 -translate-y-1/2 flex flex-col items-center pointer-events-none">
-                    <div className="p-1.5 bg-rose-600 text-white rounded-full shadow-lg ring-4 ring-rose-200">
-                      <MapPin className="w-4 h-4" />
-                    </div>
-                  </div>
-                </div>
-              </div>
+              {/* Real Interactive Leaflet Map with Geolocation & Marker Sync */}
+              <LocationPickerMap
+                latitude={latitude}
+                longitude={longitude}
+                onChange={(lat, lng) => {
+                  setLatitude(lat);
+                  setLongitude(lng);
+                }}
+                governorateName={selectedGovName}
+                centerName={selectedCenterName}
+                areaName={selectedAreaName}
+              />
             </div>
           )}
 
@@ -823,9 +846,15 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
                   <span className="text-slate-500">العنوان:</span>
                   <span className="text-slate-800">{detailedAddress}</span>
                 </div>
-                <div className="flex justify-between py-1">
+                <div className="flex justify-between py-1 border-b border-slate-200/60">
                   <span className="text-slate-500">هاتف المطعم:</span>
                   <span className="font-mono text-slate-800">{restaurantPhone}</span>
+                </div>
+                <div className="flex justify-between py-1">
+                  <span className="text-slate-500">إحداثيات الموقع (GPS):</span>
+                  <span className="font-mono text-slate-800 text-[11px] dir-ltr text-left">
+                    {latitude && longitude ? `${latitude}, ${longitude}` : 'تم التحديد على الخريطة'}
+                  </span>
                 </div>
               </div>
 

@@ -293,46 +293,60 @@ export const FinanceView: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 text-slate-700">
-              {filteredMovements.map((mov) => (
-                <tr key={mov.id} className="hover:bg-slate-50/80 transition-colors">
-                  <td className="py-3 px-4 font-mono">
-                    <span className="font-bold text-slate-900 block">
-                      {new Date(mov.date).toLocaleDateString('ar-EG')}
-                    </span>
-                    <span className="text-[10px] text-slate-400">
-                      {new Date(mov.date).toLocaleTimeString('ar-EG', {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </span>
-                  </td>
-                  <td className="py-3 px-4">{getMovementTypeBadge(mov.type)}</td>
-                  <td className="py-3 px-4">
-                    <p className="font-bold text-slate-800">{mov.description}</p>
-                    {mov.notes && (
-                      <p className="text-[11px] text-slate-400 mt-0.5">{mov.notes}</p>
-                    )}
-                  </td>
-                  <td className="py-3 px-4 font-black">
-                    <span
-                      className={`text-sm ${
-                        mov.isCredit ? 'text-emerald-700' : 'text-slate-800'
-                      }`}
-                    >
-                      {mov.isCredit ? '+' : '-'}
-                      {mov.amount.toLocaleString('ar-EG')} ج.م
-                    </span>
-                  </td>
-                  <td className="py-3 px-4 font-mono text-[11px] text-slate-500">
-                    {mov.receiptNumber || '—'}
-                  </td>
-                  <td className="py-3 px-4 text-center">
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                      مسواة ومعتمدة
-                    </span>
+              {filteredMovements.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-12 text-center">
+                    <div className="flex flex-col items-center justify-center text-slate-400">
+                      <Receipt className="w-12 h-12 stroke-[1.5] text-slate-300 mb-3" />
+                      <p className="text-sm font-bold text-slate-700">لا توجد حركات مالية مسجلة بعد</p>
+                      <p className="text-xs text-slate-400 mt-1">
+                        ستظهر تفاصيل المبيعات وعمولات الإدارة والتسويات تلقائيًا عند إتمام الطلبات.
+                      </p>
+                    </div>
                   </td>
                 </tr>
-              ))}
+              ) : (
+                filteredMovements.map((mov) => (
+                  <tr key={mov.id} className="hover:bg-slate-50/80 transition-colors">
+                    <td className="py-3 px-4 font-mono">
+                      <span className="font-bold text-slate-900 block">
+                        {new Date(mov.date).toLocaleDateString('ar-EG')}
+                      </span>
+                      <span className="text-[10px] text-slate-400">
+                        {new Date(mov.date).toLocaleTimeString('ar-EG', {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4">{getMovementTypeBadge(mov.type)}</td>
+                    <td className="py-3 px-4">
+                      <p className="font-bold text-slate-800">{mov.description}</p>
+                      {mov.notes && (
+                        <p className="text-[11px] text-slate-400 mt-0.5">{mov.notes}</p>
+                      )}
+                    </td>
+                    <td className="py-3 px-4 font-black">
+                      <span
+                        className={`text-sm ${
+                          mov.isCredit ? 'text-emerald-700' : 'text-slate-800'
+                        }`}
+                      >
+                        {mov.isCredit ? '+' : '-'}
+                        {mov.amount.toLocaleString('ar-EG')} ج.م
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 font-mono text-[11px] text-slate-500">
+                      {mov.receiptNumber || '—'}
+                    </td>
+                    <td className="py-3 px-4 text-center">
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                        مسواة ومعتمدة
+                      </span>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

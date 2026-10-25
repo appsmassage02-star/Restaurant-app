@@ -4,6 +4,9 @@ import {
   DbProfile,
   CreateRestaurantPayload,
   RestaurantCategoryLink,
+  FoodGovernorate,
+  FoodCenter,
+  FoodArea,
 } from '../types/database';
 
 export interface RestaurantFetchResult {
@@ -60,11 +63,43 @@ export async function fetchOwnerRestaurant(
 
     const rest = data as DbRestaurant;
 
-    // Fetch joined category links if any
+    // Fetch joined governorate, center, area names if available
+    try {
+      if (rest.governorate_id) {
+        const { data: gData } = await supabase
+          .from('food_governorates')
+          .select('id, name_ar, country_name')
+          .eq('id', rest.governorate_id)
+          .maybeSingle();
+        if (gData) rest.governorate = gData as FoodGovernorate;
+      }
+
+      if (rest.center_id) {
+        const { data: cData } = await supabase
+          .from('food_centers')
+          .select('id, name_ar, governorate_id')
+          .eq('id', rest.center_id)
+          .maybeSingle();
+        if (cData) rest.center = cData as FoodCenter;
+      }
+
+      if (rest.area_id) {
+        const { data: aData } = await supabase
+          .from('food_areas')
+          .select('id, name_ar, center_id')
+          .eq('id', rest.area_id)
+          .maybeSingle();
+        if (aData) rest.area = aData as FoodArea;
+      }
+    } catch {
+      // Non-blocking relation enrichment
+    }
+
+    // Fetch category links
     try {
       const { data: catLinks } = await supabase
         .from('restaurant_category_links')
-        .select('*')
+        .select('restaurant_id, category_id')
         .eq('restaurant_id', rest.id);
 
       if (catLinks) {
@@ -103,7 +138,6 @@ export async function fetchUserProfile(
 
     if (error) {
       console.warn('Could not fetch profile:', error.message);
-      // If table doesn't exist or RLS denies, return null gracefully without crashing auth
       return {
         profile: null,
         isBanned: false,
@@ -149,6 +183,8 @@ export async function fetchUserProfile(
 
 /**
  * فحص مسار إنشاء المطعم والصلاحيات قبل وبعد التنفيذ
+ * - يطابق بدقة أسماء الأعمدة الموجودة في جدول restaurants:
+ *   (owner_user_id, name, description, phone, address, detailed_address, latitude, longitude, governorate_id, center_id, area_id, image_url, is_active, is_open)
  * - لا يتجاوز RLS
  * - لا يستخدم أي مفتاح سري (service_role)
  * - إذا منعت سياسات RLS العملية، يوقف خطوة الإنشاء ويوثق بدقة السبب والمسار المعتمد المطلوب
@@ -179,7 +215,7 @@ export async function attemptCreateRestaurant(
         p_governorate_id: payload.governorate_id,
         p_center_id: payload.center_id,
         p_area_id: payload.area_id || null,
-        p_logo_url: payload.logo_url || null,
+        p_image_url: payload.image_url || null,
       }
     );
 
@@ -187,7 +223,7 @@ export async function attemptCreateRestaurant(
       return { success: true, restaurant: rpcData as DbRestaurant };
     }
   } catch {
-    // RPC not present, proceed to standard table insert check
+    // RPC غير معرف، المتابعة للمسار العادي
   }
 
   // 2. ثانيًا: محاولة الإدراج المباشر في جدول restaurants باستخدام صلاحيات المستخدم المصادق
@@ -198,14 +234,13 @@ export async function attemptCreateRestaurant(
       description: payload.description || null,
       phone: payload.phone,
       address: payload.address,
-      latitude: payload.latitude || null,
-      longitude: payload.longitude || null,
+      detailed_address: payload.detailed_address || payload.address,
+      latitude: payload.latitude ?? null,
+      longitude: payload.longitude ?? null,
       governorate_id: payload.governorate_id,
       center_id: payload.center_id,
       area_id: payload.area_id || null,
-      logo_url: payload.logo_url || null,
-      cover_image_url: payload.cover_image_url || null,
-      status: 'pending',
+      image_url: payload.image_url || null,
       is_active: false,
       is_open: false,
     };
@@ -231,7 +266,7 @@ export async function attemptCreateRestaurant(
           details:
             'السياسات الحالية المرصودة على جدول "restaurants" تسمح للمالك بقراءة سجله فقط وللعامة بقراءة المطاعم النشطة، ولا توجد سياسة INSERT تسمح للمستخدم المصادق بإدراج مطعم جديد.',
           requiredPath:
-            'اعتماد سياسة INSERT على جدول restaurants تشترط (auth.uid() = owner_user_id) أو تفعيل دالة RPC معتمدة (مثل create_restaurant) من قِبل إدارة النظام لمنع التجاوزات.',
+            'اعتماد سياسة INSERT على جدول restaurants تشترط (auth.uid() = owner_user_id) أو تفعيل دالة RPC معتمدة (مثل register_new_restaurant) من قِبل إدارة النظام.',
         };
       }
 
@@ -251,7 +286,7 @@ export async function attemptCreateRestaurant(
 
     const createdRestaurant = data as DbRestaurant;
 
-    // Link category if selected
+    // ربط التصنيفات إذا تم اختيارها
     if (payload.category_ids && payload.category_ids.length > 0) {
       try {
         const links = payload.category_ids.map((catId) => ({
