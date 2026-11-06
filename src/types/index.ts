@@ -175,8 +175,8 @@ export interface RestaurantProfile {
   governorateId?: string | number | null;
   centerId?: string | number | null;
   areaId?: string | number | null;
-  latitude: number;
-  longitude: number;
+  latitude: number | null;
+  longitude: number | null;
   deliveryRadiusKm: number;
   maxAllowedRadiusKm: number; // Admin fixed restriction
   deliveryFee: number; // Fixed/Admin guidance

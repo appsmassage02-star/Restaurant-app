@@ -122,7 +122,8 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
 
       if (catsRes.data.length > 0) {
         setCategories(catsRes.data);
-        setSelectedCategoryIds((prev) => (prev.length > 0 ? prev : [catsRes.data[0].id]));
+      } else if (catsRes.error) {
+        console.warn('Could not load categories:', catsRes.error);
       }
     } catch (err: any) {
       setGovError(err?.message || 'تعذر جلب المحافظات من الخادم.');
@@ -292,6 +293,11 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
       return;
     }
 
+    if (latitude === null || longitude === null || isNaN(latitude) || isNaN(longitude)) {
+      setErrorMsg('لم يتم تحديد موقع المطعم الفعلي. يرجى الرجوع للخطوة 2 وتحديد موقع المطعم على الخريطة أو عبر زر GPS.');
+      return;
+    }
+
     setIsSubmitting(true);
 
     const payload: CreateRestaurantPayload = {
@@ -300,8 +306,9 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
       description: restaurantDesc.trim(),
       phone: restaurantPhone.trim(),
       address: detailedAddress.trim(),
-      latitude: latitude ?? 30.0444,
-      longitude: longitude ?? 31.2357,
+      detailed_address: detailedAddress.trim(),
+      latitude,
+      longitude,
       governorate_id: String(selectedGovId),
       center_id: String(selectedCenterId),
       area_id: selectedAreaId ? String(selectedAreaId) : null,
@@ -853,7 +860,9 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
                 <div className="flex justify-between py-1">
                   <span className="text-slate-500">إحداثيات الموقع (GPS):</span>
                   <span className="font-mono text-slate-800 text-[11px] dir-ltr text-left">
-                    {latitude && longitude ? `${latitude}, ${longitude}` : 'تم التحديد على الخريطة'}
+                    {latitude !== null && longitude !== null
+                      ? `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`
+                      : 'لم يتم التحديد بعد'}
                   </span>
                 </div>
               </div>

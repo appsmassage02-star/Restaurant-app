@@ -26,9 +26,11 @@ export interface CreateRestaurantResult {
   success: boolean;
   restaurant?: DbRestaurant;
   blockedByRls?: boolean;
+  categoryLinksBlockedByRls?: boolean;
   error?: string;
   details?: string;
   requiredPath?: string;
+  warning?: string;
 }
 
 /**
@@ -120,7 +122,8 @@ export async function fetchOwnerRestaurant(
 
 /**
  * جلب الملف الشخصي للمستخدم الحالي من جدول profiles
- * والتحقق من حالة الحظر أو التعليق
+ * والتحقق من حالة الحساب اعتمادًا على الأعمدة الفعلية فقط (is_blocked و status)
+ * دون افتراض وجود أعمدة غير موجودة مثل is_banned أو is_suspended
  */
 export async function fetchUserProfile(
   userId: string
@@ -132,7 +135,7 @@ export async function fetchUserProfile(
   try {
     const { data, error } = await supabase
       .from('profiles')
-      .select('*')
+      .select('id, full_name, name, phone, email, role, is_blocked, status, created_at, updated_at')
       .eq('id', userId)
       .maybeSingle();
 
@@ -142,7 +145,7 @@ export async function fetchUserProfile(
         profile: null,
         isBanned: false,
         isSuspended: false,
-        error: error.message,
+        error: `تعذر جلب الملف الشخصي: ${error.message}`,
       };
     }
 
@@ -151,20 +154,21 @@ export async function fetchUserProfile(
     }
 
     const profile = data as DbProfile;
-    const isBanned =
-      profile.is_banned === true ||
-      profile.status === 'banned' ||
-      profile.status === 'blocked';
+    // التحقق من الحظر اعتمادًا حصريًا على is_blocked الفعلي أو حالة status
+    const isBlocked =
+      profile.is_blocked === true ||
+      profile.status === 'blocked' ||
+      profile.status === 'banned';
+
     const isSuspended =
-      profile.is_suspended === true ||
       profile.status === 'suspended' ||
       profile.status === 'inactive';
 
     return {
       profile,
-      isBanned,
+      isBanned: isBlocked,
       isSuspended,
-      banReason: isBanned
+      banReason: isBlocked
         ? 'تم حظر حساب هذا المستخدم من قبل إدارة النظام.'
         : isSuspended
         ? 'تم تعليق هذا الحساب مؤقتًا من قبل إدارة النظام.'
@@ -176,18 +180,19 @@ export async function fetchUserProfile(
       profile: null,
       isBanned: false,
       isSuspended: false,
-      error: err?.message || 'فشل جلب ملف المستخدم.',
+      error: err?.message || 'فشل جلب ملف المستخدم بسبب انقطاع الاتصال.',
     };
   }
 }
 
 /**
- * فحص مسار إنشاء المطعم والصلاحيات قبل وبعد التنفيذ
- * - يطابق بدقة أسماء الأعمدة الموجودة في جدول restaurants:
+ * تسجيل مطعم جديد في جدول restaurants
+ * - يطابق بدقة الأعمدة الفعلية:
  *   (owner_user_id, name, description, phone, address, detailed_address, latitude, longitude, governorate_id, center_id, area_id, image_url, is_active, is_open)
- * - لا يتجاوز RLS
- * - لا يستخدم أي مفتاح سري (service_role)
- * - إذا منعت سياسات RLS العملية، يوقف خطوة الإنشاء ويوثق بدقة السبب والمسار المعتمد المطلوب
+ * - لا يستخدم RPC غير موجودة
+ * - لا يستخدم أي إحداثيات افتراضية
+ * - لا يتجاوز RLS ولا يستخدم service_role
+ * - يتحقق من نتيجة إدراج التصنيفات في restaurant_category_links دون تجاهل أخطائها
  */
 export async function attemptCreateRestaurant(
   payload: CreateRestaurantPayload
@@ -195,48 +200,23 @@ export async function attemptCreateRestaurant(
   if (!isSupabaseConfigured) {
     return {
       success: false,
-      error: 'خدمة Supabase غير مكونة بالبيئة الحالية.',
+      error: 'خدمة Supabase غير مهيأة بالبيئة الحالية.',
       details: 'يرجى تزويد المتغيرين VITE_SUPABASE_URL و VITE_SUPABASE_ANON_KEY.',
     };
   }
 
-  // 1. أولاً: التحقق مما إذا كانت هناك دالة RPC معتمدة لإنشاء مطعم جديد
-  try {
-    const { data: rpcData, error: rpcError } = await supabase.rpc(
-      'register_new_restaurant',
-      {
-        p_owner_user_id: payload.owner_user_id,
-        p_name: payload.name,
-        p_description: payload.description,
-        p_phone: payload.phone,
-        p_address: payload.address,
-        p_latitude: payload.latitude,
-        p_longitude: payload.longitude,
-        p_governorate_id: payload.governorate_id,
-        p_center_id: payload.center_id,
-        p_area_id: payload.area_id || null,
-        p_image_url: payload.image_url || null,
-      }
-    );
-
-    if (!rpcError && rpcData) {
-      return { success: true, restaurant: rpcData as DbRestaurant };
-    }
-  } catch {
-    // RPC غير معرف، المتابعة للمسار العادي
-  }
-
-  // 2. ثانيًا: محاولة الإدراج المباشر في جدول restaurants باستخدام صلاحيات المستخدم المصادق
+  // 1. الإدراج المباشر في جدول restaurants باستخدام سياسة restaurant_owner_insert للمستخدم المصادق
   try {
     const insertData: any = {
       owner_user_id: payload.owner_user_id,
-      name: payload.name,
-      description: payload.description || null,
-      phone: payload.phone,
-      address: payload.address,
-      detailed_address: payload.detailed_address || payload.address,
-      latitude: payload.latitude ?? null,
-      longitude: payload.longitude ?? null,
+      name: payload.name.trim(),
+      description: payload.description?.trim() || null,
+      phone: payload.phone.trim(),
+      address: payload.address.trim(),
+      detailed_address: (payload.detailed_address || payload.address).trim(),
+      // إحداثيات حقيقية حصراً - لا إحداثيات افتراضية أو بديلة
+      latitude: payload.latitude !== undefined && payload.latitude !== null ? payload.latitude : null,
+      longitude: payload.longitude !== undefined && payload.longitude !== null ? payload.longitude : null,
       governorate_id: payload.governorate_id,
       center_id: payload.center_id,
       area_id: payload.area_id || null,
@@ -262,17 +242,15 @@ export async function attemptCreateRestaurant(
         return {
           success: false,
           blockedByRls: true,
-          error: 'سياسة الأمان (RLS) تمنع إنشاء سجل جديد في جدول المطاعم مباشرة بواسطة المستخدم.',
-          details:
-            'السياسات الحالية المرصودة على جدول "restaurants" تسمح للمالك بقراءة سجله فقط وللعامة بقراءة المطاعم النشطة، ولا توجد سياسة INSERT تسمح للمستخدم المصادق بإدراج مطعم جديد.',
-          requiredPath:
-            'اعتماد سياسة INSERT على جدول restaurants تشترط (auth.uid() = owner_user_id) أو تفعيل دالة RPC معتمدة (مثل register_new_restaurant) من قِبل إدارة النظام.',
+          error: 'سياسة الأمان (RLS) تمنع إدراج المطعم في جدول restaurants.',
+          details: `رسالة RLS: ${error.message}. يرجى مراجعة صلاحيات سياسة restaurant_owner_insert وتطابق auth.uid() مع owner_user_id.`,
+          requiredPath: 'التحقق من سياسة INSERT الممنوحة للمستخدمين المصادقين على جدول restaurants.',
         };
       }
 
       return {
         success: false,
-        error: `خطأ في حفظ المطعم: ${error.message}`,
+        error: `خطأ في حفظ المطعم بقاعدة البيانات: ${error.message}`,
         details: error.details || error.hint || error.code,
       };
     }
@@ -280,23 +258,52 @@ export async function attemptCreateRestaurant(
     if (!data) {
       return {
         success: false,
-        error: 'لم يتم إرجاع سجل المطعم بعد الإنشاء.',
+        error: 'لم يتم إرجاع سجل المطعم بعد الحفظ في قاعدة البيانات.',
       };
     }
 
     const createdRestaurant = data as DbRestaurant;
 
-    // ربط التصنيفات إذا تم اختيارها
+    // 2. ربط التصنيفات في جدول restaurant_category_links والتحقق من النتيجة دون تجاهلها بصمت
+    let categoryLinksError: string | null = null;
+    let categoryLinksBlockedByRls = false;
+
     if (payload.category_ids && payload.category_ids.length > 0) {
       try {
         const links = payload.category_ids.map((catId) => ({
           restaurant_id: createdRestaurant.id,
           category_id: catId,
         }));
-        await supabase.from('restaurant_category_links').insert(links);
-      } catch (catErr) {
-        console.warn('Could not insert restaurant category links:', catErr);
+
+        const { error: catErr } = await supabase
+          .from('restaurant_category_links')
+          .insert(links);
+
+        if (catErr) {
+          console.warn('Failed to insert restaurant_category_links:', catErr);
+          const isCatRls =
+            catErr.code === '42501' ||
+            catErr.message?.toLowerCase().includes('row-level security') ||
+            catErr.message?.toLowerCase().includes('permission denied');
+
+          categoryLinksBlockedByRls = isCatRls;
+          categoryLinksError = isCatRls
+            ? 'تم إنشاء وحفظ بيانات المطعم بنجاح في جدول restaurants، لكن تعذر حفظ ربط التصنيفات بسبب سياسة RLS على جدول restaurant_category_links (لا توجد سياسة INSERT للمالك على هذا الجدول حاليًا).'
+            : `تم إنشاء المطعم، لكن فشل ربط التصنيفات: ${catErr.message}`;
+        }
+      } catch (catException: any) {
+        categoryLinksError = `استثناء أثناء محاولة ربط التصنيفات: ${catException?.message}`;
       }
+    }
+
+    if (categoryLinksError) {
+      return {
+        success: true, // سجل المطعم نفسه حُفظ بنجاح في restaurants
+        restaurant: createdRestaurant,
+        categoryLinksBlockedByRls,
+        warning: categoryLinksError,
+        details: 'تم حفظ المطعم في قاعدة البيانات، ولكن لم تُربط التصنيفات لاحتياج جدول restaurant_category_links إلى سياسة INSERT للمالك.',
+      };
     }
 
     return {

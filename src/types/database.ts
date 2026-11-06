@@ -10,8 +10,7 @@ export interface DbProfile {
   phone?: string | null;
   email?: string | null;
   role?: string | null;
-  is_banned?: boolean | null;
-  is_suspended?: boolean | null;
+  is_blocked?: boolean | null;
   status?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
@@ -56,7 +55,6 @@ export interface FoodArea {
 export interface RestaurantCategory {
   id: string; // uuid
   name: string; // اسم التصنيف (مثل: مطعم مشويات، حلويات...)
-  description?: string | null;
   image_url?: string | null;
   is_active?: boolean;
   sort_order?: number | null;
@@ -85,6 +83,9 @@ export interface DbRestaurant {
   is_active?: boolean; // حالة تفعيل المطعم من الإدارة
   is_open?: boolean; // حالة فتح/إغلاق المطعم لاستقبال الطلبات
   delivery_fee?: number | null;
+  commission_percent?: number | null;
+  food_money_settlement_mode?: string | null;
+  max_delivery_radius_km?: number | null;
   created_at?: string;
   updated_at?: string;
 

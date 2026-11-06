@@ -98,17 +98,20 @@ export async function fetchAreas(
 
 /**
  * جلب التصنيفات المعتمدة للمطاعم من جدول restaurant_categories
- * الأعمدة الفعلية: id, name, description, image_url, sort_order, is_active
+ * الأعمدة الفعلية في قاعدة البيانات: id, name, image_url, sort_order, is_active, created_at
  */
 export async function fetchRestaurantCategories(): Promise<GeoServiceResult<RestaurantCategory>> {
   if (!isSupabaseConfigured) {
-    return { data: [], error: null };
+    return {
+      data: [],
+      error: 'لم يتم ضبط إعدادات الاتصال بقاعدة البيانات (VITE_SUPABASE_URL و VITE_SUPABASE_ANON_KEY).',
+    };
   }
 
   try {
     const { data, error } = await supabase
       .from('restaurant_categories')
-      .select('id, name, description, image_url, sort_order, is_active')
+      .select('id, name, image_url, sort_order, is_active, created_at')
       .eq('is_active', true)
       .order('sort_order', { ascending: true });
 
@@ -119,6 +122,6 @@ export async function fetchRestaurantCategories(): Promise<GeoServiceResult<Rest
 
     return { data: (data || []) as RestaurantCategory[], error: null };
   } catch (err: any) {
-    return { data: [], error: err?.message || 'فشل جلب تصنيفات المطاعم.' };
+    return { data: [], error: err?.message || 'فشل جلب تصنيفات المطاعم من قاعدة البيانات.' };
   }
 }
