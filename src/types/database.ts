@@ -111,3 +111,66 @@ export interface CreateRestaurantPayload {
   image_url?: string | null;
   category_ids?: string[];
 }
+
+/**
+ * جداول الطلبات الفعلية في قاعدة بيانات Supabase (المرحلة الأولى)
+ */
+export interface DbRestaurantOrder {
+  id: string; // uuid
+  order_number: number | string;
+  customer_user_id: string; // uuid
+  restaurant_id: string; // uuid
+  fulfillment_route: 'restaurant_delivery' | 'driver_delivery' | string;
+  status: string;
+  restaurant_name_snapshot?: string | null;
+  restaurant_phone_snapshot?: string | null;
+  restaurant_latitude_snapshot?: number | null;
+  restaurant_longitude_snapshot?: number | null;
+  customer_name: string;
+  customer_phone: string;
+  delivery_address: string;
+  delivery_latitude?: number | null;
+  delivery_longitude?: number | null;
+  food_subtotal: number;
+  discount_amount: number;
+  delivery_fee: number;
+  customer_total: number;
+  commission_percent_snapshot?: number | null;
+  driver_fee_share?: number | null;
+  admin_fee_share?: number | null;
+  restaurant_fee_share?: number | null;
+  payment_method: string;
+  restaurant_confirmed_at?: string | null;
+  restaurant_rejected_at?: string | null;
+  restaurant_confirmation_method?: string | null;
+  cancellation_reason?: string | null;
+  created_at: string;
+  updated_at: string;
+  delivery_governorate_name_snapshot?: string | null;
+  delivery_center_name_snapshot?: string | null;
+  delivery_area_name_snapshot?: string | null;
+}
+
+export interface DbRestaurantOrderItem {
+  id: string; // uuid
+  order_id: string; // uuid
+  menu_item_id?: string | null; // uuid
+  item_name_snapshot: string;
+  unit_price_snapshot: number;
+  quantity: number;
+  discount_amount: number;
+  line_total: number;
+  customer_approved_price_change?: boolean | null;
+  created_at: string;
+}
+
+export interface DbRestaurantOrderStatusHistory {
+  id: string; // uuid
+  order_id: string; // uuid
+  old_status?: string | null;
+  new_status: string;
+  changed_by?: string | null;
+  note?: string | null;
+  created_at: string;
+}
+

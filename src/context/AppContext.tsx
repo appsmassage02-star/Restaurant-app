@@ -47,10 +47,13 @@ import {
   updateRestaurantDbSettings,
 } from '../services/deliveryAreaService';
 import {
+  orderRealtimeManager,
+  RealtimeConnectionStatus,
+} from '../services/orderRealtimeService';
+import {
   INITIAL_CATEGORIES,
   INITIAL_MENU_ITEMS,
   INITIAL_OFFERS,
-  INITIAL_ORDERS,
   INITIAL_MOVEMENTS,
   INITIAL_NOTIFICATIONS,
 } from '../services/mockData';
@@ -172,6 +175,10 @@ interface AppContextType {
 
   // Orders
   orders: Order[];
+  ordersLoading: boolean;
+  ordersError: string | null;
+  ordersRealtimeStatus: RealtimeConnectionStatus;
+  refreshOrders: () => void;
   acceptOrder: (orderId: string) => void;
   rejectOrder: (orderId: string, reason: string) => void;
   startPreparingOrder: (orderId: string) => void;
@@ -238,6 +245,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [offersError, setOffersError] = useState<string | null>(null);
 
   const [orders, setOrders] = useState<Order[]>([]);
+  const [ordersLoading, setOrdersLoading] = useState<boolean>(false);
+  const [ordersError, setOrdersError] = useState<string | null>(null);
+  const [ordersRealtimeStatus, setOrdersRealtimeStatus] = useState<RealtimeConnectionStatus>('DISCONNECTED');
   const [movements, setMovements] = useState<FinancialMovement[]>([]);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [newOrderAlert, setNewOrderAlert] = useState<Order | null>(null);
@@ -304,6 +314,61 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       await loadOffersData(dbRestaurant.id);
     }
   }, [dbRestaurant?.id, loadOffersData]);
+
+  // الاستقبال اللحظي للطلبات والمزامنة التلقائية (المرحلة الأولى)
+  useEffect(() => {
+    if (!dbRestaurant?.id) {
+      orderRealtimeManager.stop();
+      setOrders([]);
+      setOrdersLoading(false);
+      setOrdersError(null);
+      setOrdersRealtimeStatus('DISCONNECTED');
+      return;
+    }
+
+    setOrdersLoading(true);
+    setOrdersError(null);
+
+    orderRealtimeManager.start(dbRestaurant.id, {
+      onOrdersUpdated: (freshOrders) => {
+        setOrders(freshOrders);
+        setOrdersLoading(false);
+        setOrdersError(null);
+      },
+      onNewOrderReceived: (newOrder) => {
+        setNewOrderAlert(newOrder);
+        setNotifications((prev) => [
+          {
+            id: `notif-${Date.now()}-${newOrder.id}`,
+            title: `وصول طلب جديد! #${newOrder.orderNumber}`,
+            message: `طلب جديد بقيمة ${newOrder.grandTotal} ج.م من العميل ${newOrder.customer.name}`,
+            timestamp: new Date().toISOString(),
+            type: 'ORDER',
+            read: false,
+            orderId: newOrder.id,
+          },
+          ...prev,
+        ]);
+      },
+      onStatusChanged: (status) => {
+        setOrdersRealtimeStatus(status);
+      },
+      onError: (errMsg) => {
+        setOrdersError(errMsg);
+        setOrdersLoading(false);
+      },
+    });
+
+    return () => {
+      orderRealtimeManager.stop();
+    };
+  }, [dbRestaurant?.id]);
+
+  const refreshOrders = useCallback(() => {
+    if (dbRestaurant?.id) {
+      orderRealtimeManager.triggerSync();
+    }
+  }, [dbRestaurant?.id]);
 
   // Translate Supabase Auth Error to Egyptian Arabic
   const translateAuthError = (message: string): string => {
@@ -601,6 +666,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         console.error('Logout error:', err);
       }
     }
+    orderRealtimeManager.stop();
     setSession(null);
     setUser(null);
     setUserProfile(null);
@@ -611,6 +677,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setMenuItems([]);
     setOffers([]);
     setOrders([]);
+    setOrdersLoading(false);
+    setOrdersError(null);
+    setOrdersRealtimeStatus('DISCONNECTED');
     setMovements([]);
     setNotifications([]);
   };
@@ -942,52 +1011,44 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     deleteOfferAsync(id);
   };
 
-  // Orders
-  const updateOrderStatus = (
-    orderId: string,
-    nextStatus: OrderStatus,
-    note: string,
-    updatedBy: string,
-    rejectionReason?: string
-  ) => {
-    setOrders((prev) =>
-      prev.map((ord) => {
-        if (ord.id !== orderId) return ord;
-        const newHistory = [
-          ...ord.statusHistory,
-          { status: nextStatus, timestamp: new Date().toISOString(), note, updatedBy },
-        ];
-        return {
-          ...ord,
-          status: nextStatus,
-          rejectionReason: rejectionReason || ord.rejectionReason,
-          statusHistory: newHistory,
-        };
-      })
+  // Orders — منع التغيير المحلي الوهمي لحالة الطلب (المرحلة الأولى)
+  // لا توجد سياسة UPDATE لمالك المطعم في RLS حالياً، وتحديث دورة الحالات مجدول للمرحلة الثانية
+  const acceptOrder = (_orderId: string) => {
+    console.warn(
+      'تحديث حالة الطلب معطل مؤقتاً في المرحلة الأولى؛ سيتم تفعيل دورة تحديث الحالات الرسمية في المرحلة الثانية فور اعتماد الصلاحيات.'
     );
   };
 
-  const acceptOrder = (orderId: string) => {
-    updateOrderStatus(orderId, 'ACCEPTED', 'تم قبول الطلب رسميًا من قِبل المطعم.', 'مدير المطعم');
+  const rejectOrder = (_orderId: string, _reason: string) => {
+    console.warn(
+      'رفض الطلب معطل مؤقتاً في المرحلة الأولى؛ سيتم تفعيل دورة تحديث الحالات الرسمية في المرحلة الثانية.'
+    );
   };
 
-  const rejectOrder = (orderId: string, reason: string) => {
-    updateOrderStatus(orderId, 'REJECTED', `اعتذر المطعم: ${reason}`, 'مدير المطعم', reason);
+  const startPreparingOrder = (_orderId: string) => {
+    console.warn(
+      'بدء تجهيز الطلب معطل مؤقتاً في المرحلة الأولى؛ سيتم تفعيل دورة تحديث الحالات الرسمية في المرحلة الثانية.'
+    );
   };
 
-  const startPreparingOrder = (orderId: string) => {
-    updateOrderStatus(orderId, 'PREPARING', 'بدأ تجهيز أصناف الطلب.', 'طاقم المطبخ');
+  const markOrderReady = (_orderId: string) => {
+    console.warn(
+      'تحديد الطلب كجاهز معطل مؤقتاً في المرحلة الأولى؛ سيتم تفعيل دورة تحديث الحالات الرسمية في المرحلة الثانية.'
+    );
   };
 
-  const markOrderReady = (orderId: string) => {
-    updateOrderStatus(orderId, 'READY', 'الطلب جاهز للتسليم.', 'طاقم المطبخ');
-  };
-
-  const completeOrder = (orderId: string) => {
-    updateOrderStatus(orderId, 'COMPLETED', 'تم التسليم بنجاح.', 'طيار المطعم');
+  const completeOrder = (_orderId: string) => {
+    console.warn(
+      'إكمال الطلب معطل مؤقتاً في المرحلة الأولى؛ سيتم تفعيل دورة تحديث الحالات الرسمية في المرحلة الثانية.'
+    );
   };
 
   const injectMockOrder = (route: ExecutionRoute = 'SELF_DELIVERY') => {
+    // منع خلط الطلبات التجريبية بالطلبات الحقيقية إذا كان الحساب مرتبطاً بمطعم حقيقي
+    if (hasRestaurant && dbRestaurant?.id) {
+      console.warn('تم تعطيل توليد الطلبات التجريبية نظراً لارتباط الحساب بمطعم فعلي في قاعدة البيانات.');
+      return;
+    }
     const randomSuffix = Math.floor(1000 + Math.random() * 9000);
     const orderNum = `TB-${randomSuffix}`;
     const sampleItem = menuItems.find((i) => i.isAvailable) || menuItems[0];
@@ -1176,6 +1237,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         toggleOfferStatus,
         toggleOfferStatusAsync,
         orders,
+        ordersLoading,
+        ordersError,
+        ordersRealtimeStatus,
+        refreshOrders,
         acceptOrder,
         rejectOrder,
         startPreparingOrder,

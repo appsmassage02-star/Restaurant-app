@@ -22,6 +22,8 @@ export const DemoBar: React.FC = () => {
     restaurant,
     hasRestaurant,
     refreshRestaurant,
+    orders,
+    ordersRealtimeStatus,
   } = useApp();
 
   const [isOpen, setIsOpen] = useState(false);
@@ -104,6 +106,28 @@ export const DemoBar: React.FC = () => {
                   }`}
                 >
                   {restaurant.registrationStatus}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between text-slate-400">
+                <span>الاستقبال اللحظي للطلبات:</span>
+                <span
+                  className={`font-bold px-2 py-0.5 rounded text-[10px] ${
+                    ordersRealtimeStatus === 'CONNECTED'
+                      ? 'bg-emerald-900/60 text-emerald-300'
+                      : ordersRealtimeStatus === 'CONNECTING'
+                      ? 'bg-amber-900/60 text-amber-300'
+                      : 'bg-slate-800 text-slate-400'
+                  }`}
+                >
+                  {ordersRealtimeStatus === 'CONNECTED' ? 'متصل (Realtime)' : ordersRealtimeStatus === 'CONNECTING' ? 'جاري الاتصال...' : 'احتياطي'}
+                </span>
+              </div>
+
+              <div className="flex items-center justify-between text-slate-400">
+                <span>الطلبات الفعلية المسجلة:</span>
+                <span className="font-mono font-bold text-amber-400">
+                  {orders.length} طلب
                 </span>
               </div>
             </div>

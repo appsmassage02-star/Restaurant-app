@@ -11,11 +11,16 @@ import {
   Flame,
   PackageCheck,
   Eye,
-  Plus,
   RefreshCw,
+  Radio,
+  Wifi,
+  WifiOff,
+  Loader2,
+  AlertCircle,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Order, OrderStatus, ExecutionRoute } from '../../types';
+import { getArabicStatusLabel, getArabicRouteLabel } from '../../services/orderService';
 
 interface OrdersViewProps {
   onOpenOrderDetails: (order: Order) => void;
@@ -26,7 +31,15 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   onOpenOrderDetails,
   initialFilter = 'ALL',
 }) => {
-  const { orders, injectMockOrder } = useApp();
+  const {
+    orders,
+    ordersLoading,
+    ordersError,
+    ordersRealtimeStatus,
+    refreshOrders,
+    hasRestaurant,
+    restaurant,
+  } = useApp();
 
   const [statusFilter, setStatusFilter] = useState<string>(initialFilter);
   const [routeFilter, setRouteFilter] = useState<'ALL' | ExecutionRoute>('ALL');
@@ -52,40 +65,42 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
     return true;
   });
 
-  const getStatusBadge = (status: OrderStatus) => {
+  const getStatusBadge = (status: OrderStatus, rawStatus?: string) => {
+    const label = getArabicStatusLabel(rawStatus || status);
+
     switch (status) {
       case 'PENDING':
         return (
           <span className="px-2.5 py-1 text-xs font-bold rounded-lg bg-amber-100 text-amber-800 border border-amber-200 flex items-center gap-1">
             <Clock className="w-3.5 h-3.5 text-amber-600 animate-spin-slow" />
-            بانتظار التأكيد
+            {label}
           </span>
         );
       case 'ACCEPTED':
         return (
           <span className="px-2.5 py-1 text-xs font-bold rounded-lg bg-blue-100 text-blue-800 border border-blue-200">
-            تم القبول
+            {label}
           </span>
         );
       case 'PREPARING':
         return (
           <span className="px-2.5 py-1 text-xs font-bold rounded-lg bg-orange-100 text-orange-800 border border-orange-200 flex items-center gap-1">
             <Flame className="w-3.5 h-3.5 text-orange-600" />
-            قيد التجهيز
+            {label}
           </span>
         );
       case 'READY':
         return (
           <span className="px-2.5 py-1 text-xs font-bold rounded-lg bg-purple-100 text-purple-800 border border-purple-200 flex items-center gap-1">
             <PackageCheck className="w-3.5 h-3.5 text-purple-600" />
-            جاهز للتسليم
+            {label}
           </span>
         );
       case 'COMPLETED':
         return (
           <span className="px-2.5 py-1 text-xs font-bold rounded-lg bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center gap-1">
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-            مكتمل ومسلّم
+            {label}
           </span>
         );
       case 'REJECTED':
@@ -93,7 +108,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
         return (
           <span className="px-2.5 py-1 text-xs font-bold rounded-lg bg-rose-100 text-rose-800 border border-rose-200 flex items-center gap-1">
             <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
-            مرفوض
+            {label}
           </span>
         );
     }
@@ -110,8 +125,8 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   };
 
   return (
-    <div className="space-y-5">
-      {/* Top Header & Fast Injection */}
+    <div className="space-y-5 font-['Cairo',sans-serif]">
+      {/* Top Header & Realtime Connection Status */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-black text-slate-900 flex items-center gap-2">
@@ -119,27 +134,72 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
             إدارة الطلبات ومسارات التنفيذ
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            استقبال الطلبات ومتابعة التجهيز وتتبع مسار التوصيل الذاتي واتصال المندوب
+            استقبال الطلبات الحقيقية ومتابعة التجهيز وتتبع مسار التوصيل الذاتي واتصال المندوب
           </p>
         </div>
 
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => injectMockOrder('SELF_DELIVERY')}
-            className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+          {/* Realtime Status Indicator */}
+          <div
+            className={`px-3 py-1.5 rounded-xl border flex items-center gap-1.5 text-xs font-bold ${
+              ordersRealtimeStatus === 'CONNECTED'
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                : ordersRealtimeStatus === 'CONNECTING'
+                ? 'bg-amber-50 text-amber-700 border-amber-200'
+                : 'bg-slate-100 text-slate-600 border-slate-200'
+            }`}
           >
-            <Plus className="w-4 h-4" />
-            <span>طلب تجريبي ذاتي</span>
-          </button>
+            {ordersRealtimeStatus === 'CONNECTED' ? (
+              <>
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span>استقبال لحظي نشط</span>
+              </>
+            ) : ordersRealtimeStatus === 'CONNECTING' ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 text-amber-600 animate-spin" />
+                <span>جاري المزامنة...</span>
+              </>
+            ) : (
+              <>
+                <WifiOff className="w-3.5 h-3.5 text-slate-400" />
+                <span>اتصال احتياطي</span>
+              </>
+            )}
+          </div>
+
+          {/* Manual Refresh / Sync Button */}
           <button
-            onClick={() => injectMockOrder('COURIER_PHONE')}
-            className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+            onClick={refreshOrders}
+            disabled={ordersLoading}
+            title="مزامنة الطلبات وتحديث القائمة الآن"
+            className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 shadow-2xs transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
           >
-            <PhoneCall className="w-4 h-4" />
-            <span>طلب هاتف مندوب</span>
+            <RefreshCw className={`w-3.5 h-3.5 ${ordersLoading ? 'animate-spin text-amber-600' : ''}`} />
+            <span>تحديث</span>
           </button>
         </div>
       </div>
+
+      {/* Database Error Banner */}
+      {ordersError && (
+        <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 flex items-start justify-between gap-3 text-xs">
+          <div className="flex items-start gap-2.5">
+            <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold">تعذر استعلام الطلبات من قاعدة البيانات:</p>
+              <p className="text-rose-700 mt-0.5 leading-relaxed font-mono text-[11px] dir-ltr text-right">
+                {ordersError}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={refreshOrders}
+            className="px-3 py-1.5 bg-rose-600 text-white font-bold rounded-xl text-xs hover:bg-rose-700 shrink-0 cursor-pointer"
+          >
+            إعادة المحاولة
+          </button>
+        </div>
+      )}
 
       {/* Filter and Search Bar */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-3">
@@ -150,7 +210,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="ابحث برقم الطلب (مثال: TB-8491) أو اسم العميل أو الهاتف..."
+              placeholder="ابحث برقم الطلب (مثال: 19 أو TB-8491) أو اسم العميل أو الهاتف..."
               className="w-full pl-4 pr-10 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-amber-500 focus:bg-white"
             />
             <Search className="w-4 h-4 text-slate-400 absolute right-3.5 top-3" />
@@ -234,13 +294,25 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
         </div>
       </div>
 
-      {/* Orders List / Cards */}
-      {filteredOrders.length === 0 ? (
+      {/* Loading Skeleton */}
+      {ordersLoading && orders.length === 0 ? (
+        <div className="bg-white rounded-2xl p-12 text-center border border-slate-200 space-y-3">
+          <Loader2 className="w-8 h-8 text-amber-500 animate-spin mx-auto" />
+          <h4 className="text-sm font-bold text-slate-800">
+            جاري جلب الطلبات الفعلية من قاعدة البيانات...
+          </h4>
+          <p className="text-xs text-slate-400">
+            يتم الاتصال بجدول public.restaurant_orders بفلتر المطعم الحالي
+          </p>
+        </div>
+      ) : filteredOrders.length === 0 ? (
         <div className="bg-white rounded-2xl p-12 text-center border border-slate-200">
           <ShoppingBag className="w-12 h-12 text-slate-300 mx-auto mb-3 stroke-1" />
-          <h4 className="text-sm font-bold text-slate-700">لا توجد طلبات مطابقة للفلتر المحدد</h4>
-          <p className="text-xs text-slate-400 mt-1">
-            جرّب تغيير حالة الفلتر أو إضافة طلب تجريبي جديد باستخدام الأزرار بالأعلى.
+          <h4 className="text-sm font-bold text-slate-700">لا توجد طلبات مطابقة</h4>
+          <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">
+            {orders.length === 0
+              ? 'لا توجد طلبات مسجلة لمطعمك في قاعدة البيانات حالياً. عند إرسال أي عميل طلباً جديداً سيظهر تلقائياً هنا عبر الاستقبال اللحظي.'
+              : 'لا توجد طلبات مطابقة للفلتر أو البحث المحدد. جرّب تغيير معايير البحث.'}
           </p>
         </div>
       ) : (
@@ -264,7 +336,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                         })})
                       </span>
                     </div>
-                    {getStatusBadge(ord.status)}
+                    {getStatusBadge(ord.status, ord.rawStatus)}
                   </div>
 
                   {/* Route Indicator Tag */}
@@ -272,12 +344,12 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                     {isSelf ? (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 text-[10px] font-bold border border-emerald-200">
                         <Truck className="w-3 h-3 text-emerald-600" />
-                        مسار 1: توصيل ذاتي للمطعم
+                        مسار 1: {getArabicRouteLabel(ord.rawRoute || ord.route)}
                       </span>
                     ) : (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-50 text-blue-800 text-[10px] font-bold border border-blue-200">
                         <PhoneCall className="w-3 h-3 text-blue-600" />
-                        مسار 2: اتصال مندوب
+                        مسار 2: {getArabicRouteLabel(ord.rawRoute || ord.route)}
                       </span>
                     )}
                   </div>
@@ -335,7 +407,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                     className="w-full py-2 px-3 bg-slate-100 hover:bg-amber-500 hover:text-slate-950 text-slate-800 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                   >
                     <Eye className="w-4 h-4" />
-                    <span>عرض التفاصيل واتخاذ الإجراء</span>
+                    <span>عرض التفاصيل والسجل</span>
                   </button>
                 </div>
               </div>

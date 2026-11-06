@@ -222,16 +222,16 @@ const MainAppContent: React.FC = () => {
                 وصول طلب جديد! #{newOrderAlert.orderNumber}
               </h4>
               <p className="text-xs font-semibold mt-0.5 text-slate-900">
-                قيمة الطلب: {newOrderAlert.grandTotal} ج.م ({newOrderAlert.route === 'SELF_DELIVERY' ? 'توصيل ذاتي' : 'مندوب هاتف'})
+                قيمة الطلب: {newOrderAlert.grandTotal} ج.م ({newOrderAlert.route === 'SELF_DELIVERY' ? 'توصيل ذاتي للمطعم' : 'اتصال وتوصيل مندوب'})
               </p>
               <button
                 onClick={() => {
                   setSelectedOrderForDetails(newOrderAlert);
                   clearNewOrderAlert();
                 }}
-                className="mt-2 text-xs font-black bg-slate-950 text-white px-3 py-1 rounded-lg shadow-xs hover:bg-slate-800"
+                className="mt-2 text-xs font-black bg-slate-950 text-white px-3 py-1 rounded-lg shadow-xs hover:bg-slate-800 cursor-pointer"
               >
-                معاينة الطلب وقبوله &larr;
+                معاينة وتفاصيل الطلب &larr;
               </button>
             </div>
           </div>

@@ -35,6 +35,9 @@ export const Header: React.FC<HeaderProps> = ({
     logout,
     notifications,
     injectMockOrder,
+    hasRestaurant,
+    ordersRealtimeStatus,
+    refreshOrders,
   } = useApp();
 
   const [showProfileMenu, setShowProfileMenu] = useState(false);
@@ -114,45 +117,70 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
           </div>
 
-          {/* Quick Mock Order Generator */}
-          <div className="relative">
+          {/* Realtime Status / Orders indicator when connected, or Mock Order in Dev */}
+          {hasRestaurant ? (
             <button
-              onClick={() => setShowNewOrderMenu(!showNewOrderMenu)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-amber-900 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-xl transition-all shadow-xs"
+              onClick={refreshOrders}
+              title="الاستقبال اللحظي للطلبات نشط — انقر لتحديث يدوي سريع"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-xl border transition-all shadow-xs cursor-pointer bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100"
             >
-              <PlusCircle className="w-4 h-4 text-amber-700" />
-              <span className="hidden sm:inline">طلب تجريبي</span>
-              <ChevronDown className="w-3 h-3 text-amber-800" />
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  ordersRealtimeStatus === 'CONNECTED'
+                    ? 'bg-emerald-500 animate-pulse'
+                    : ordersRealtimeStatus === 'CONNECTING'
+                    ? 'bg-amber-500 animate-ping'
+                    : 'bg-slate-400'
+                }`}
+              />
+              <span className="hidden sm:inline">
+                {ordersRealtimeStatus === 'CONNECTED'
+                  ? 'استقبال لحظي'
+                  : ordersRealtimeStatus === 'CONNECTING'
+                  ? 'مزامنة...'
+                  : 'اتصال احتياطي'}
+              </span>
             </button>
+          ) : (
+            <div className="relative">
+              <button
+                onClick={() => setShowNewOrderMenu(!showNewOrderMenu)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-amber-900 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-xl transition-all shadow-xs"
+              >
+                <PlusCircle className="w-4 h-4 text-amber-700" />
+                <span className="hidden sm:inline">طلب تجريبي</span>
+                <ChevronDown className="w-3 h-3 text-amber-800" />
+              </button>
 
-            {showNewOrderMenu && (
-              <div className="absolute left-0 mt-2 w-56 bg-white rounded-xl shadow-xl border border-slate-200 py-1.5 z-50 text-right">
-                <div className="px-3 py-1 text-xs font-bold text-slate-400 border-b border-slate-100 mb-1">
-                  محاكاة وصول طلب جديد
+              {showNewOrderMenu && (
+                <div className="absolute left-0 mt-2 w-56 bg-white rounded-xl shadow-xl border border-slate-200 py-1.5 z-50 text-right">
+                  <div className="px-3 py-1 text-xs font-bold text-slate-400 border-b border-slate-100 mb-1">
+                    محاكاة وصول طلب جديد
+                  </div>
+                  <button
+                    onClick={() => {
+                      injectMockOrder('SELF_DELIVERY');
+                      setShowNewOrderMenu(false);
+                    }}
+                    className="w-full px-3 py-2 text-xs text-slate-700 hover:bg-amber-50 flex items-center justify-between"
+                  >
+                    <span className="font-semibold text-slate-800">مسار 1: توصيل ذاتي للمطعم</span>
+                    <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded">إلكتروني</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      injectMockOrder('COURIER_PHONE');
+                      setShowNewOrderMenu(false);
+                    }}
+                    className="w-full px-3 py-2 text-xs text-slate-700 hover:bg-amber-50 flex items-center justify-between"
+                  >
+                    <span className="font-semibold text-slate-800">مسار 2: مندوب واتصال هاتفي</span>
+                    <PhoneCall className="w-3.5 h-3.5 text-blue-600" />
+                  </button>
                 </div>
-                <button
-                  onClick={() => {
-                    injectMockOrder('SELF_DELIVERY');
-                    setShowNewOrderMenu(false);
-                  }}
-                  className="w-full px-3 py-2 text-xs text-slate-700 hover:bg-amber-50 flex items-center justify-between"
-                >
-                  <span className="font-semibold text-slate-800">مسار 1: توصيل ذاتي للمطعم</span>
-                  <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded">إلكتروني</span>
-                </button>
-                <button
-                  onClick={() => {
-                    injectMockOrder('COURIER_PHONE');
-                    setShowNewOrderMenu(false);
-                  }}
-                  className="w-full px-3 py-2 text-xs text-slate-700 hover:bg-amber-50 flex items-center justify-between"
-                >
-                  <span className="font-semibold text-slate-800">مسار 2: مندوب واتصال هاتفي</span>
-                  <PhoneCall className="w-3.5 h-3.5 text-blue-600" />
-                </button>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
 
           {/* Notifications Button */}
           <button

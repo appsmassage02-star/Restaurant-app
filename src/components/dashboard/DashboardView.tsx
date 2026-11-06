@@ -16,6 +16,7 @@ import { useApp } from '../../context/AppContext';
 import { StatCards } from './StatCards';
 import { SalesChart } from './SalesChart';
 import { Order } from '../../types';
+import { getArabicStatusLabel } from '../../services/orderService';
 
 interface DashboardViewProps {
   onNavigate: (view: string, filter?: string) => void;
@@ -30,49 +31,54 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const recentOrders = orders.slice(0, 5);
 
-  const getStatusBadge = (status: string) => {
+  const getStatusBadge = (status: string, rawStatus?: string) => {
+    const label = getArabicStatusLabel(rawStatus || status);
     switch (status) {
       case 'PENDING':
         return (
           <span className="px-2.5 py-1 text-xs font-bold rounded-lg bg-amber-100 text-amber-800 border border-amber-200 flex items-center gap-1 w-fit">
             <Clock className="w-3 h-3 text-amber-600" />
-            منتظر التأكيد
+            {label}
           </span>
         );
       case 'ACCEPTED':
         return (
           <span className="px-2.5 py-1 text-xs font-bold rounded-lg bg-blue-100 text-blue-800 border border-blue-200">
-            تم القبول
+            {label}
           </span>
         );
       case 'PREPARING':
         return (
           <span className="px-2.5 py-1 text-xs font-bold rounded-lg bg-orange-100 text-orange-800 border border-orange-200">
-            قيد التجهيز
+            {label}
           </span>
         );
       case 'READY':
         return (
           <span className="px-2.5 py-1 text-xs font-bold rounded-lg bg-purple-100 text-purple-800 border border-purple-200">
-            جاهز للتسليم
+            {label}
           </span>
         );
       case 'COMPLETED':
         return (
           <span className="px-2.5 py-1 text-xs font-bold rounded-lg bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center gap-1 w-fit">
             <CheckCircle className="w-3 h-3 text-emerald-600" />
-            مكتمل
+            {label}
           </span>
         );
       case 'REJECTED':
       case 'CANCELLED':
         return (
           <span className="px-2.5 py-1 text-xs font-bold rounded-lg bg-rose-100 text-rose-800 border border-rose-200">
-            مرفوض / ملغي
+            {label}
           </span>
         );
       default:
-        return null;
+        return (
+          <span className="px-2.5 py-1 text-xs font-bold rounded-lg bg-slate-100 text-slate-800 border border-slate-200">
+            {label}
+          </span>
+        );
     }
   };
 
@@ -268,7 +274,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         صافي المطعم: {ord.netRestaurantDue.toLocaleString('ar-EG')} ج.م
                       </span>
                     </td>
-                    <td className="py-3.5 px-4">{getStatusBadge(ord.status)}</td>
+                    <td className="py-3.5 px-4">{getStatusBadge(ord.status, ord.rawStatus)}</td>
                     <td className="py-3.5 px-4 text-center">
                       <button
                         onClick={() => onOpenOrderDetails(ord)}

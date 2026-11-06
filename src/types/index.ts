@@ -98,6 +98,7 @@ export interface OrderItem {
 
 export interface OrderStatusHistory {
   status: OrderStatus;
+  rawStatus?: string;
   timestamp: string;
   note?: string;
   updatedBy: string;
@@ -109,6 +110,8 @@ export interface CustomerInfo {
   address: string;
   governorate: string;
   city: string;
+  center?: string;
+  area?: string;
   notes?: string;
 }
 
@@ -123,15 +126,23 @@ export interface Order {
   foodTotal: number; // after discount
   deliveryFee: number;
   grandTotal: number;
-  paymentMethod: 'CASH_ON_DELIVERY';
+  paymentMethod: 'CASH_ON_DELIVERY' | string;
   route: ExecutionRoute;
+  rawRoute?: string;
   status: OrderStatus;
+  rawStatus?: string;
   rejectionReason?: string;
   statusHistory: OrderStatusHistory[];
   adminCommissionRate: number; // e.g. 0.10 for 10%
   adminCommissionAmount: number; // calculated solely on foodTotal
   netRestaurantDue: number; // foodTotal - adminCommissionAmount + (route === 'SELF_DELIVERY' ? deliveryFee : 0)
   settlementStatus: SettlementStatus;
+  adminFeeShare?: number;
+  restaurantFeeShare?: number;
+  driverFeeShare?: number;
+  deliveryGovernorateSnapshot?: string;
+  deliveryCenterSnapshot?: string;
+  deliveryAreaSnapshot?: string;
   phoneCourierCallLog?: {
     courierName: string;
     courierPhone: string;
