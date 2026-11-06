@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   UtensilsCrossed,
   Plus,
@@ -12,6 +12,10 @@ import {
   Layers,
   ArrowUpDown,
   Search,
+  Loader2,
+  RefreshCw,
+  Tag,
+  ShieldCheck,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { MenuCategory, MenuItem } from '../../types';
@@ -22,16 +26,20 @@ export const MenuView: React.FC = () => {
   const {
     categories,
     menuItems,
-    addCategory,
-    updateCategory,
-    deleteCategory,
-    addItem,
-    updateItem,
-    deleteItem,
-    toggleItemAvailability,
+    menuLoading,
+    menuError,
+    reloadMenu,
+    addCategoryAsync,
+    updateCategoryAsync,
+    deleteCategoryAsync,
+    addItemAsync,
+    updateItemAsync,
+    deleteItemAsync,
+    toggleItemAvailabilityAsync,
+    dbRestaurant,
   } = useApp();
 
-  const [activeCategoryId, setActiveCategoryId] = useState<string>(categories[0]?.id || '');
+  const [activeCategoryId, setActiveCategoryId] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
 
   // Modals state
@@ -41,8 +49,21 @@ export const MenuView: React.FC = () => {
   const [showItemModal, setShowItemModal] = useState(false);
   const [itemToEdit, setItemToEdit] = useState<MenuItem | null>(null);
 
-  // Deletion feedback
-  const [deleteError, setDeleteError] = useState('');
+  // Deletion & Action feedback
+  const [actionError, setActionError] = useState('');
+  const [actionSuccess, setActionSuccess] = useState('');
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // Sync active category when categories load
+  useEffect(() => {
+    if (categories.length > 0) {
+      if (!activeCategoryId || !categories.some((c) => c.id === activeCategoryId)) {
+        setActiveCategoryId(categories[0].id);
+      }
+    } else {
+      setActiveCategoryId('');
+    }
+  }, [categories, activeCategoryId]);
 
   const activeCategory = categories.find((c) => c.id === activeCategoryId) || categories[0];
 
@@ -60,15 +81,52 @@ export const MenuView: React.FC = () => {
     return true;
   });
 
-  const handleDeleteCategory = (catId: string) => {
-    setDeleteError('');
-    const success = deleteCategory(catId);
-    if (!success) {
-      setDeleteError('لا يمكن حذف قسم يحتوي على أصناف. يرجى نقل أو حذف الأصناف أولاً لحماية بيانات المنيو.');
-    } else {
-      if (activeCategoryId === catId) {
-        setActiveCategoryId(categories[0]?.id || '');
+  const handleDeleteCategory = async (catId: string) => {
+    setActionError('');
+    setActionSuccess('');
+    setIsDeleting(true);
+    try {
+      const res = await deleteCategoryAsync(catId);
+      if (!res.success) {
+        setActionError(res.error || 'تعذر حذف القسم من قاعدة البيانات.');
+      } else {
+        setActionSuccess('تم حذف القسم بنجاح من قاعدة البيانات.');
+        const remaining = categories.filter((c) => c.id !== catId);
+        setActiveCategoryId(remaining[0]?.id || '');
+        setTimeout(() => setActionSuccess(''), 3000);
       }
+    } catch (err: any) {
+      setActionError(err?.message || 'حدث خطأ أثناء حذف القسم.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleDeleteItem = async (itemId: string) => {
+    setActionError('');
+    setActionSuccess('');
+    try {
+      const res = await deleteItemAsync(itemId);
+      if (!res.success) {
+        setActionError(res.error || 'تعذر حذف الصنف من قاعدة البيانات.');
+      } else {
+        setActionSuccess('تم حذف الصنف نهائيًا من قاعدة البيانات.');
+        setTimeout(() => setActionSuccess(''), 3000);
+      }
+    } catch (err: any) {
+      setActionError(err?.message || 'حدث خطأ أثناء حذف الصنف.');
+    }
+  };
+
+  const handleToggleAvailability = async (itemId: string) => {
+    setActionError('');
+    try {
+      const res = await toggleItemAvailabilityAsync(itemId);
+      if (!res.success) {
+        setActionError(res.error || 'فشل تحديث حالة توفر الصنف.');
+      }
+    } catch (err: any) {
+      setActionError(err?.message || 'حدث خطأ أثناء تعديل حالة الصنف.');
     }
   };
 
@@ -77,12 +135,22 @@ export const MenuView: React.FC = () => {
       {/* Page Header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-black text-slate-900 flex items-center gap-2">
-            <UtensilsCrossed className="w-5 h-5 text-amber-500" />
-            إدارة منيو وأقسام المطعم
-          </h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-black text-slate-900 flex items-center gap-2">
+              <UtensilsCrossed className="w-5 h-5 text-amber-500" />
+              إدارة منيو وأقسام المطعم
+            </h2>
+            <button
+              onClick={() => reloadMenu()}
+              disabled={menuLoading}
+              className="p-1 text-slate-400 hover:text-amber-600 transition-colors rounded-lg disabled:opacity-50"
+              title="تحديث البيانات من قاعدة البيانات"
+            >
+              <RefreshCw className={`w-4 h-4 ${menuLoading ? 'animate-spin text-amber-600' : ''}`} />
+            </button>
+          </div>
           <p className="text-xs text-slate-500 mt-0.5">
-            إضافة وتعديل الأقسام والأصناف، ضبط خيارات الإضافات وحالة التوفر في الوقت الفعلي
+            البيانات محفوظة ومسترجعة مباشرة من جداول Supabase الفعلية (restaurant_menu_categories و restaurant_menu_items)
           </p>
         </div>
 
@@ -92,7 +160,7 @@ export const MenuView: React.FC = () => {
               setCategoryToEdit(null);
               setShowCategoryModal(true);
             }}
-            className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl transition-colors flex items-center gap-1.5"
+            className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer"
           >
             <FolderPlus className="w-4 h-4 text-amber-600" />
             <span>إضافة قسم جديد</span>
@@ -103,7 +171,8 @@ export const MenuView: React.FC = () => {
               setItemToEdit(null);
               setShowItemModal(true);
             }}
-            className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black text-xs rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+            disabled={categories.length === 0}
+            className="px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:bg-slate-200 disabled:text-slate-400 text-slate-950 font-black text-xs rounded-xl shadow-xs transition-colors flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
           >
             <Plus className="w-4 h-4" />
             <span>إضافة صنف جديد</span>
@@ -111,10 +180,58 @@ export const MenuView: React.FC = () => {
         </div>
       </div>
 
-      {deleteError && (
+      {/* Central Category Distinction Banner */}
+      {dbRestaurant && (
+        <div className="p-3 bg-amber-50/70 border border-amber-200/80 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs text-slate-700">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>
+              <strong className="text-slate-900">تصنيف المطعم المعتمد من الإدارة المركزية:</strong>{' '}
+              {dbRestaurant.category_links && dbRestaurant.category_links.length > 0
+                ? 'مرتبط بتصنيفات المنظومة المعتمدة (مثل: مشويات)'
+                : 'عام'}
+            </span>
+          </div>
+          <span className="text-[11px] text-amber-800 bg-amber-100/70 px-2.5 py-0.5 rounded-lg border border-amber-200">
+            أقسام المنيو أدناه خاصة بوجبات هذا المطعم وتُحفظ مستقلاً
+          </span>
+        </div>
+      )}
+
+      {/* Loading State Banner */}
+      {menuLoading && (
+        <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl flex items-center justify-center gap-2 text-slate-600 text-xs font-bold">
+          <Loader2 className="w-4 h-4 animate-spin text-amber-600" />
+          <span>جارٍ مزامنة أقسام وأصناف المنيو مع قاعدة البيانات...</span>
+        </div>
+      )}
+
+      {/* Success Notification */}
+      {actionSuccess && (
+        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between text-emerald-800 text-xs font-bold">
+          <div className="flex items-center gap-2">
+            <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>{actionSuccess}</span>
+          </div>
+          <button onClick={() => setActionSuccess('')} className="text-emerald-500 font-normal">
+            إغلاق
+          </button>
+        </div>
+      )}
+
+      {/* Action / Error Notification */}
+      {(actionError || menuError) && (
         <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-center justify-between text-rose-700 text-xs font-bold">
-          <span>{deleteError}</span>
-          <button onClick={() => setDeleteError('')} className="text-rose-500 font-normal">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span>{actionError || menuError}</span>
+          </div>
+          <button
+            onClick={() => {
+              setActionError('');
+            }}
+            className="text-rose-500 font-normal"
+          >
             إغلاق
           </button>
         </div>
@@ -123,7 +240,7 @@ export const MenuView: React.FC = () => {
       {/* Categories Tabs Strip */}
       <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-xs">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-bold text-slate-700">أقسام المنيو:</span>
+          <span className="text-xs font-bold text-slate-700">أقسام منيو المطعم الفعلية:</span>
           {activeCategory && (
             <div className="flex items-center gap-1.5 text-xs">
               <button
@@ -138,7 +255,7 @@ export const MenuView: React.FC = () => {
               </button>
               <button
                 onClick={() =>
-                  updateCategory(activeCategory.id, { isVisible: !activeCategory.isVisible })
+                  updateCategoryAsync(activeCategory.id, { isVisible: !activeCategory.isVisible })
                 }
                 className="text-slate-500 hover:text-slate-800 p-1 rounded"
                 title={activeCategory.isVisible ? 'إخفاء القسم من الزبائن' : 'إظهار القسم'}
@@ -146,8 +263,9 @@ export const MenuView: React.FC = () => {
                 {activeCategory.isVisible ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5 text-rose-500" />}
               </button>
               <button
+                disabled={isDeleting}
                 onClick={() => handleDeleteCategory(activeCategory.id)}
-                className="text-slate-400 hover:text-rose-600 p-1 rounded"
+                className="text-slate-400 hover:text-rose-600 p-1 rounded disabled:opacity-50"
                 title="حذف القسم"
               >
                 <Trash2 className="w-3.5 h-3.5" />
@@ -157,35 +275,35 @@ export const MenuView: React.FC = () => {
         </div>
 
         {categories.length === 0 ? (
-          <div className="py-3 px-2 text-center text-xs text-slate-400">
-            لا توجد أقسام منيو حتى الآن. انقر على «إضافة قسم جديد» بالأعلى لبدء تصنيف الوجبات والمشروبات.
+          <div className="text-center py-4 text-xs text-slate-400">
+            لم يتم إنشاء أي أقسام منيو لهذا المطعم في قاعدة البيانات حتى الآن.
           </div>
         ) : (
-          <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
             {categories.map((cat) => {
+              const isActive = cat.id === activeCategoryId;
               const count = menuItems.filter((i) => i.categoryId === cat.id).length;
-              const isActive = activeCategoryId === cat.id;
               return (
                 <button
                   key={cat.id}
                   onClick={() => setActiveCategoryId(cat.id)}
-                  className={`px-3.5 py-2 rounded-xl font-bold whitespace-nowrap transition-all flex items-center gap-2 ${
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
                     isActive
                       ? 'bg-amber-500 text-slate-950 shadow-xs'
-                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                      : 'bg-slate-50 text-slate-600 hover:bg-slate-100'
                   }`}
                 >
                   <span>{cat.name}</span>
                   <span
-                    className={`px-1.5 py-0.2 rounded-full text-[10px] ${
-                      isActive ? 'bg-slate-900 text-white' : 'bg-slate-200 text-slate-600'
+                    className={`text-[10px] px-1.5 py-0.2 rounded-full ${
+                      isActive ? 'bg-amber-600 text-slate-950 font-black' : 'bg-slate-200 text-slate-600'
                     }`}
                   >
                     {count}
                   </span>
                   {!cat.isVisible && (
-                    <span title="مخفي من تطبيق العميل">
-                      <EyeOff className="w-3 h-3 text-rose-500" />
+                    <span title="مخفي عن الزبائن">
+                      <EyeOff className="w-3 h-3 text-slate-400" />
                     </span>
                   )}
                 </button>
@@ -195,38 +313,39 @@ export const MenuView: React.FC = () => {
         )}
       </div>
 
-      {/* Search and Category Summary */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-        <div className="relative flex-1 max-w-md">
+      {/* Filter and Search Bar */}
+      <div className="flex items-center justify-between gap-3">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="ابحث عن صنف في هذا القسم..."
-            className="w-full pl-4 pr-10 py-2 bg-white border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-amber-500"
+            placeholder="بحث في الأصناف والمكونات..."
+            className="w-full pl-3 pr-9 py-2 bg-white border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-amber-500 shadow-2xs"
           />
-          <Search className="w-4 h-4 text-slate-400 absolute right-3 top-2.5" />
         </div>
 
-        <div className="text-xs text-slate-500">
-          يعرض {filteredItems.length} صنف في قسم: <strong>{activeCategory?.name || 'كافة الأقسام'}</strong>
+        <div className="text-xs text-slate-500 font-bold">
+          إجمالي الأصناف: <span className="text-slate-800">{filteredItems.length}</span> صنف
         </div>
       </div>
 
       {/* Menu Items Grid */}
       {filteredItems.length === 0 ? (
-        <div className="bg-white rounded-2xl p-12 text-center border border-slate-200">
-          <UtensilsCrossed className="w-12 h-12 text-slate-300 mx-auto mb-3 stroke-1" />
-          <h4 className="text-sm font-bold text-slate-700">لا توجد أصناف في هذا القسم حاليًا</h4>
+        <div className="bg-white rounded-2xl p-12 text-center border border-slate-200 shadow-xs">
+          <UtensilsCrossed className="w-12 h-12 text-slate-300 mx-auto mb-3 stroke-[1.5]" />
+          <h4 className="text-sm font-bold text-slate-700">لا توجد أصناف مسجلة في هذا القسم</h4>
           <p className="text-xs text-slate-400 mt-1 mb-4">
-            أضف أول وجبة أو صنف لهذا القسم لتظهر في منيو تطبيق طلبات البيت.
+            أضف أول صنف للقسم لتتمكن من استقبال طلبات العملاء وحفظه دائمًا في قاعدة بيانات Supabase.
           </p>
           <button
             onClick={() => {
               setItemToEdit(null);
               setShowItemModal(true);
             }}
-            className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs rounded-xl shadow-xs inline-flex items-center gap-1.5"
+            disabled={categories.length === 0}
+            className="px-4 py-2 bg-amber-500 hover:bg-amber-600 disabled:bg-slate-200 disabled:text-slate-400 text-slate-950 font-bold text-xs rounded-xl shadow-xs inline-flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed"
           >
             <Plus className="w-4 h-4" />
             <span>إضافة صنف الآن</span>
@@ -237,70 +356,66 @@ export const MenuView: React.FC = () => {
           {filteredItems.map((item) => (
             <div
               key={item.id}
-              className={`bg-white rounded-2xl border transition-all overflow-hidden flex flex-col justify-between ${
+              className={`bg-white rounded-2xl border transition-all overflow-hidden flex flex-col justify-between shadow-xs ${
                 item.isAvailable
-                  ? 'border-slate-200 hover:border-amber-400 hover:shadow-md'
-                  : 'border-slate-200 bg-slate-50/60 opacity-80'
+                  ? 'border-slate-200 hover:border-amber-300'
+                  : 'border-slate-200 bg-slate-50/70 opacity-80'
               }`}
             >
               <div>
-                {/* Image & Badges */}
-                <div className="relative h-44 overflow-hidden bg-slate-100">
+                {/* Image and badges */}
+                <div className="relative h-36 bg-slate-100 overflow-hidden">
                   <img
                     src={item.image}
                     alt={item.name}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                    className="w-full h-full object-cover"
                   />
-                  <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5">
-                    <span className="px-2.5 py-1 bg-slate-900/80 backdrop-blur-xs text-white text-xs font-black rounded-lg shadow">
-                      {item.price.toLocaleString('ar-EG')} ج.م
-                    </span>
-                  </div>
+                  {!item.isAvailable && (
+                    <div className="absolute inset-0 bg-slate-950/60 backdrop-blur-2xs flex items-center justify-center">
+                      <span className="bg-rose-600 text-white font-bold text-xs px-3 py-1 rounded-full shadow-xs">
+                        غير متاح حاليًا (نفاد المخزون)
+                      </span>
+                    </div>
+                  )}
 
-                  <div className="absolute top-2.5 left-2.5">
-                    <button
-                      onClick={() => toggleItemAvailability(item.id)}
-                      className={`px-2.5 py-1 text-[11px] font-bold rounded-lg backdrop-blur-xs shadow transition-all ${
-                        item.isAvailable
-                          ? 'bg-emerald-600 text-white hover:bg-emerald-700'
-                          : 'bg-rose-600 text-white hover:bg-rose-700'
-                      }`}
-                      title="انقر لتغيير التوفر فوريًا"
-                    >
-                      {item.isAvailable ? 'متوفر' : 'نفد (غير متاح)'}
-                    </button>
+                  <div className="absolute top-2 left-2 bg-white/90 backdrop-blur-xs font-black text-slate-950 text-xs px-2.5 py-1 rounded-lg shadow-xs">
+                    {item.price.toLocaleString('ar-EG')} ج.م
                   </div>
                 </div>
 
                 {/* Content */}
-                <div className="p-4 space-y-2">
+                <div className="p-4 space-y-1.5">
                   <div className="flex items-start justify-between gap-2">
-                    <h3 className="text-sm font-bold text-slate-900 leading-tight">
+                    <h4 className="text-xs font-bold text-slate-900 leading-snug">
                       {item.name}
-                    </h3>
+                    </h4>
                   </div>
 
-                  <p className="text-xs text-slate-500 line-clamp-2 leading-relaxed">
+                  <p className="text-[11px] text-slate-500 line-clamp-2 leading-relaxed">
                     {item.description || 'لا يوجد وصف مضاف لهذا الصنف.'}
                   </p>
 
-                  {/* Option groups count indicator */}
+                  {/* Option Groups Badges */}
                   {item.optionGroups && item.optionGroups.length > 0 && (
-                    <div className="pt-1 flex items-center gap-1.5 text-[11px] text-amber-700 font-semibold">
-                      <Layers className="w-3.5 h-3.5" />
-                      <span>
-                        {item.optionGroups.length} مجموعات إضافات وخيارات مخصصة
-                      </span>
+                    <div className="pt-2 flex flex-wrap gap-1">
+                      {item.optionGroups.map((grp) => (
+                        <span
+                          key={grp.id}
+                          className="text-[10px] bg-amber-50 text-amber-800 px-2 py-0.5 rounded-md border border-amber-200/60 font-semibold"
+                        >
+                          {grp.name} ({grp.options.length})
+                        </span>
+                      ))}
                     </div>
                   )}
                 </div>
               </div>
 
-              {/* Card Footer: Edit / Delete */}
+              {/* Card Footer Actions */}
               <div className="p-4 pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
                 <button
-                  onClick={() => toggleItemAvailability(item.id)}
-                  className={`text-xs font-semibold px-2 py-1 rounded-lg ${
+                  onClick={() => handleToggleAvailability(item.id)}
+                  className={`text-xs font-semibold px-2 py-1 rounded-lg cursor-pointer ${
                     item.isAvailable
                       ? 'text-rose-600 hover:bg-rose-50'
                       : 'text-emerald-600 hover:bg-emerald-50'
@@ -315,15 +430,15 @@ export const MenuView: React.FC = () => {
                       setItemToEdit(item);
                       setShowItemModal(true);
                     }}
-                    className="p-1.5 text-slate-600 hover:text-amber-600 hover:bg-slate-100 rounded-lg transition-colors"
+                    className="p-1.5 text-slate-600 hover:text-amber-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
                     title="تعديل الصنف"
                   >
                     <Edit2 className="w-4 h-4" />
                   </button>
 
                   <button
-                    onClick={() => deleteItem(item.id)}
-                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg transition-colors"
+                    onClick={() => handleDeleteItem(item.id)}
+                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
                     title="حذف الصنف نهائيًا"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -337,20 +452,37 @@ export const MenuView: React.FC = () => {
 
       {/* Rules Notice */}
       <div className="p-4 bg-slate-100 rounded-2xl border border-slate-200 text-xs text-slate-600 space-y-1">
-        <p className="font-bold text-slate-800">قواعد تسعير وتوفر الأصناف:</p>
-        <p>• إيقاف صنف كـ «غير متاح» يمنع طلبه في محاكاة العميل فورًا دون حذفه من قاعدة البيانات.</p>
-        <p>• تعديل سعر الصنف لا يؤثر على الطلبات السابقة أو الفواتير المصدرة لضمان صحة السجلات المالية.</p>
+        <p className="font-bold text-slate-800">قواعد المنيو والتخزين الفعلي:</p>
+        <p>• تُحفظ وتُعدل الأقسام والأصناف في قاعدة بيانات Supabase مباشرة وتظل موجودة دائمًا بعد إعادة تحميل الصفحة.</p>
+        <p>• إيقاف صنف كـ «غير متاح» يحدّث حقل is_available في جدول restaurant_menu_items دون حذفه.</p>
       </div>
 
       {/* Modals */}
       <CategoryModal
         isOpen={showCategoryModal}
         onClose={() => setShowCategoryModal(false)}
-        onSave={(name, desc) => {
+        onSave={async (name, desc) => {
           if (categoryToEdit) {
-            updateCategory(categoryToEdit.id, { name, description: desc });
+            const res = await updateCategoryAsync(categoryToEdit.id, { name, description: desc });
+            if (!res.success) {
+              setActionError(res.error || 'تعذر تعديل القسم.');
+              return false;
+            }
+            setActionSuccess('تم تعديل القسم بنجاح في قاعدة البيانات.');
+            setTimeout(() => setActionSuccess(''), 3000);
+            return true;
           } else {
-            addCategory(name, desc);
+            const res = await addCategoryAsync(name, desc);
+            if (!res.success) {
+              setActionError(res.error || 'تعذر حفظ القسم.');
+              return false;
+            }
+            if (res.category?.id) {
+              setActiveCategoryId(res.category.id);
+            }
+            setActionSuccess('تمت إضافة القسم وحفظه بنجاح في قاعدة البيانات.');
+            setTimeout(() => setActionSuccess(''), 3000);
+            return true;
           }
         }}
         categoryToEdit={categoryToEdit}
@@ -359,11 +491,25 @@ export const MenuView: React.FC = () => {
       <ItemModal
         isOpen={showItemModal}
         onClose={() => setShowItemModal(false)}
-        onSave={(data) => {
+        onSave={async (data) => {
           if (itemToEdit) {
-            updateItem(itemToEdit.id, data);
+            const res = await updateItemAsync(itemToEdit.id, data);
+            if (!res.success) {
+              setActionError(res.error || 'تعذر تعديل الصنف.');
+              return false;
+            }
+            setActionSuccess('تم تحديث بيانات الصنف وخياراته في قاعدة البيانات.');
+            setTimeout(() => setActionSuccess(''), 3000);
+            return true;
           } else {
-            addItem(data);
+            const res = await addItemAsync(data);
+            if (!res.success) {
+              setActionError(res.error || 'تعذر حفظ الصنف.');
+              return false;
+            }
+            setActionSuccess('تم حفظ الصنف وخياراته بنجاح في قاعدة البيانات.');
+            setTimeout(() => setActionSuccess(''), 3000);
+            return true;
           }
         }}
         categories={categories}

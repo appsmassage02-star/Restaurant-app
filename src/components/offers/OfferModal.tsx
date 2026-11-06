@@ -8,13 +8,15 @@ import {
   Check,
   AlertCircle,
   Image as ImageIcon,
+  Loader2,
+  Info,
 } from 'lucide-react';
 import { Offer, DiscountType, OfferStatus, MenuItem } from '../../types';
 
 interface OfferModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (offerData: Omit<Offer, 'id'>) => void;
+  onSave: (offerData: Omit<Offer, 'id'>) => Promise<boolean> | void;
   offerToEdit?: Offer | null;
   menuItems: MenuItem[];
 }
@@ -33,12 +35,14 @@ export const OfferModal: React.FC<OfferModalProps> = ({
   );
   const [discountType, setDiscountType] = useState<DiscountType>('PERCENTAGE');
   const [discountValue, setDiscountValue] = useState<number | ''>(15);
-  const [appliesToItemIds, setAppliesToItemIds] = useState<string[]>([]);
-  const [startDate, setStartDate] = useState('2026-10-22');
-  const [endDate, setEndDate] = useState('2026-11-05');
+  const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
+  const [endDate, setEndDate] = useState(
+    new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+  );
   const [status, setStatus] = useState<OfferStatus>('ACTIVE');
   const [sortOrder, setSortOrder] = useState(1);
   const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     if (offerToEdit) {
@@ -47,9 +51,11 @@ export const OfferModal: React.FC<OfferModalProps> = ({
       setBannerImage(offerToEdit.bannerImage);
       setDiscountType(offerToEdit.discountType);
       setDiscountValue(offerToEdit.discountValue);
-      setAppliesToItemIds(offerToEdit.appliesToItemIds);
-      setStartDate(offerToEdit.startDate);
-      setEndDate(offerToEdit.endDate);
+      setStartDate(offerToEdit.startDate || new Date().toISOString().split('T')[0]);
+      setEndDate(
+        offerToEdit.endDate ||
+          new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+      );
       setStatus(offerToEdit.status);
       setSortOrder(offerToEdit.sortOrder);
     } else {
@@ -58,26 +64,20 @@ export const OfferModal: React.FC<OfferModalProps> = ({
       setBannerImage('https://images.unsplash.com/photo-1555939594-58d7cb561ad1?w=1000&auto=format&fit=crop&q=80');
       setDiscountType('PERCENTAGE');
       setDiscountValue(15);
-      setAppliesToItemIds([]);
-      setStartDate('2026-10-22');
-      setEndDate('2026-11-05');
+      setStartDate(new Date().toISOString().split('T')[0]);
+      setEndDate(
+        new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+      );
       setStatus('ACTIVE');
       setSortOrder(1);
     }
     setError('');
+    setIsSubmitting(false);
   }, [offerToEdit, isOpen]);
 
   if (!isOpen) return null;
 
-  const toggleItemSelection = (id: string) => {
-    if (appliesToItemIds.includes(id)) {
-      setAppliesToItemIds(appliesToItemIds.filter((i) => i !== id));
-    } else {
-      setAppliesToItemIds([...appliesToItemIds, id]);
-    }
-  };
-
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) {
       setError('يرجى إدخال عنوان العرض.');
@@ -92,20 +92,32 @@ export const OfferModal: React.FC<OfferModalProps> = ({
       return;
     }
 
-    onSave({
-      title: title.trim(),
-      description: description.trim(),
-      bannerImage: bannerImage.trim() || 'https://images.unsplash.com/photo-1555939594-58d7cb561ad1?w=1000&auto=format&fit=crop&q=80',
-      discountType,
-      discountValue: Number(discountValue),
-      appliesToItemIds,
-      startDate,
-      endDate,
-      status,
-      sortOrder: Number(sortOrder),
-    });
+    try {
+      setIsSubmitting(true);
+      setError('');
+      const res = await onSave({
+        title: title.trim(),
+        description: description.trim(),
+        bannerImage: bannerImage.trim() || 'https://images.unsplash.com/photo-1555939594-58d7cb561ad1?w=1000&auto=format&fit=crop&q=80',
+        discountType,
+        discountValue: Number(discountValue),
+        appliesToItemIds: [],
+        startDate,
+        endDate,
+        status,
+        sortOrder: Number(sortOrder),
+      });
 
-    onClose();
+      if (res === false) {
+        setIsSubmitting(false);
+        return;
+      }
+
+      onClose();
+    } catch (err: any) {
+      setError(err?.message || 'فشل حفظ العرض في قاعدة البيانات.');
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -122,11 +134,15 @@ export const OfferModal: React.FC<OfferModalProps> = ({
                 {offerToEdit ? 'تعديل بيانات العرض الترويجي' : 'إنشاء عرض وسلايدر جديد'}
               </h3>
               <p className="text-[11px] text-slate-400">
-                عرض يظهر في البانر العلوي ويوفر خصومات للزبائن
+                حفظ العرض في جدول restaurant_offers الفعلي في Supabase
               </p>
             </div>
           </div>
-          <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg">
+          <button
+            onClick={onClose}
+            disabled={isSubmitting}
+            className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg disabled:opacity-50"
+          >
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -134,7 +150,7 @@ export const OfferModal: React.FC<OfferModalProps> = ({
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 text-xs">
           {error && (
-            <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-center gap-2 text-rose-700 font-bold">
+            <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-center gap-2 text-rose-700 font-bold leading-relaxed">
               <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
               <span>{error}</span>
             </div>
@@ -145,48 +161,53 @@ export const OfferModal: React.FC<OfferModalProps> = ({
             <input
               type="text"
               required
+              disabled={isSubmitting}
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="مثال: عرض لمة العيلة على المشويات — وفر 20%"
-              className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-amber-500 focus:bg-white font-bold"
+              className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-amber-500 focus:bg-white font-bold disabled:opacity-50"
             />
           </div>
 
           <div>
-            <label className="block text-slate-700 font-bold mb-1">وصف العرض وتفاصيله</label>
+            <label className="block text-slate-700 font-bold mb-1">وصف العرض وشروطه</label>
             <textarea
               rows={2}
+              disabled={isSubmitting}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="شرح شروط العرض، مثل: متاح حتى نفاذ الكمية أو خلال نهاية الأسبوع..."
-              className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-amber-500 focus:bg-white"
+              placeholder="وصف تفصيلي للخصم وشروط الاستفادة منه..."
+              className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-amber-500 focus:bg-white disabled:opacity-50"
             />
           </div>
 
-          {/* Discount Type & Value */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 p-3.5 bg-slate-50 rounded-2xl border border-slate-200">
+          {/* Discount type & value */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             <div>
-              <label className="block text-slate-700 font-bold mb-1.5">نوع الخصم</label>
+              <label className="block text-slate-700 font-bold mb-1">نوع الخصم *</label>
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
+                  disabled={isSubmitting}
                   onClick={() => setDiscountType('PERCENTAGE')}
-                  className={`py-2 px-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
+                  className={`py-2 px-3 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                     discountType === 'PERCENTAGE'
                       ? 'bg-amber-500 text-slate-950 shadow-xs'
-                      : 'bg-white text-slate-600 border border-slate-200'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                   }`}
                 >
                   <Percent className="w-3.5 h-3.5" />
                   <span>نسبة مئوية (%)</span>
                 </button>
+
                 <button
                   type="button"
+                  disabled={isSubmitting}
                   onClick={() => setDiscountType('FIXED')}
-                  className={`py-2 px-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
+                  className={`py-2 px-3 rounded-xl font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                     discountType === 'FIXED'
                       ? 'bg-amber-500 text-slate-950 shadow-xs'
-                      : 'bg-white text-slate-600 border border-slate-200'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                   }`}
                 >
                   <Coins className="w-3.5 h-3.5" />
@@ -196,116 +217,102 @@ export const OfferModal: React.FC<OfferModalProps> = ({
             </div>
 
             <div>
-              <label className="block text-slate-700 font-bold mb-1.5">
-                قيمة الخصم {discountType === 'PERCENTAGE' ? '(%)' : '(جنيه)'} *
+              <label className="block text-slate-700 font-bold mb-1">
+                قيمة الخصم {discountType === 'PERCENTAGE' ? '(%)' : '(ج.م)'} *
               </label>
               <input
                 type="number"
                 min="1"
-                step="1"
+                max={discountType === 'PERCENTAGE' ? 80 : 1000}
                 required
+                disabled={isSubmitting}
                 value={discountValue}
                 onChange={(e) =>
                   setDiscountValue(e.target.value === '' ? '' : parseFloat(e.target.value))
                 }
-                className="w-full px-3.5 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-900"
+                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-amber-500 font-bold text-slate-900 disabled:opacity-50"
               />
             </div>
           </div>
 
-          {/* Banner image URL */}
-          <div>
-            <label className="block text-slate-700 font-bold mb-1">
-              رابط صورة البانر (للسلايدر)
-            </label>
-            <input
-              type="url"
-              value={bannerImage}
-              onChange={(e) => setBannerImage(e.target.value)}
-              placeholder="https://..."
-              className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-left dir-ltr focus:ring-2 focus:ring-amber-500"
-            />
-          </div>
-
-          {/* Target items */}
-          <div>
-            <label className="block text-slate-700 font-bold mb-1">
-              الأصناف المشمولة بالعرض (اتركها فارغة لتشمل كافة الأصناف):
-            </label>
-            <div className="max-h-36 overflow-y-auto p-2.5 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
-              {menuItems.map((item) => {
-                const isSelected = appliesToItemIds.includes(item.id);
-                return (
-                  <label
-                    key={item.id}
-                    className="flex items-center justify-between p-2 bg-white rounded-lg border border-slate-200/60 cursor-pointer select-none text-xs hover:bg-amber-50/50"
-                  >
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => toggleItemSelection(item.id)}
-                        className="w-3.5 h-3.5 text-amber-600 rounded"
-                      />
-                      <span className="font-semibold text-slate-800">{item.name}</span>
-                    </div>
-                    <span className="text-slate-400 font-mono">{item.price} ج.م</span>
-                  </label>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Dates & Status */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {/* Dates */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             <div>
-              <label className="block text-slate-700 font-bold mb-1">تاريخ البدء</label>
+              <label className="block text-slate-700 font-bold mb-1">تاريخ بدء سريان العرض *</label>
               <input
                 type="date"
+                required
+                disabled={isSubmitting}
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs"
+                className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-amber-500 disabled:opacity-50"
               />
             </div>
+
             <div>
-              <label className="block text-slate-700 font-bold mb-1">تاريخ الانتهاء</label>
+              <label className="block text-slate-700 font-bold mb-1">تاريخ انتهاء العرض *</label>
               <input
                 type="date"
+                required
+                disabled={isSubmitting}
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs"
+                className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-amber-500 disabled:opacity-50"
               />
-            </div>
-            <div>
-              <label className="block text-slate-700 font-bold mb-1">حالة العرض</label>
-              <select
-                value={status}
-                onChange={(e) => setStatus(e.target.value as OfferStatus)}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold"
-              >
-                <option value="ACTIVE">نشط ويعمل</option>
-                <option value="PAUSED">متوقف مؤقتًا</option>
-                <option value="DRAFT">مسودة</option>
-                <option value="EXPIRED">منتهٍ</option>
-              </select>
             </div>
           </div>
 
-          {/* Action buttons */}
+          {/* Status & Preview Banner Note */}
+          <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-slate-700 font-bold">حالة تفعيل العرض في السلايدر</label>
+              <button
+                type="button"
+                disabled={isSubmitting}
+                onClick={() => setStatus(status === 'ACTIVE' ? 'PAUSED' : 'ACTIVE')}
+                className={`px-3 py-1 rounded-xl font-bold text-xs transition-all ${
+                  status === 'ACTIVE'
+                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                    : 'bg-slate-200 text-slate-700'
+                }`}
+              >
+                {status === 'ACTIVE' ? 'مفعل في السلايدر' : 'متوقف مؤقتًا'}
+              </button>
+            </div>
+            <div className="flex items-start gap-1.5 text-[11px] text-slate-500">
+              <Info className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+              <span>
+                مخطط جدول restaurant_offers يحفظ العنوان والوصف ونوع وقيمة الخصم وفترة الصلاحية. يتم توليد تصميم السلايدر تلقائيًا وجذابًا بناءً على هذه البيانات.
+              </span>
+            </div>
+          </div>
+
+          {/* Actions */}
           <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
             <button
               type="button"
+              disabled={isSubmitting}
               onClick={onClose}
-              className="px-4 py-2 border border-slate-200 rounded-xl text-slate-600 font-bold hover:bg-slate-100"
+              className="px-4 py-2 border border-slate-200 rounded-xl text-slate-600 font-bold hover:bg-slate-100 disabled:opacity-50"
             >
               إلغاء
             </button>
             <button
               type="submit"
-              className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-xl font-black flex items-center gap-1.5 shadow-md shadow-amber-500/20"
+              disabled={isSubmitting}
+              className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-xl font-black flex items-center gap-1.5 shadow-md shadow-amber-500/20 disabled:opacity-60 cursor-pointer"
             >
-              <Check className="w-4 h-4" />
-              <span>{offerToEdit ? 'حفظ تعديلات العرض' : 'إطلاق العرض'}</span>
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>جارٍ الحفظ في قاعدة البيانات...</span>
+                </>
+              ) : (
+                <>
+                  <Check className="w-4 h-4" />
+                  <span>{offerToEdit ? 'حفظ تعديلات العرض' : 'إنشاء وتفعيل العرض'}</span>
+                </>
+              )}
             </button>
           </div>
         </form>

@@ -26,6 +26,27 @@ import {
   CreateRestaurantResult,
 } from '../services/restaurantService';
 import {
+  fetchRestaurantMenuCategories,
+  fetchRestaurantMenuItems,
+  createRestaurantMenuCategory,
+  updateRestaurantMenuCategory,
+  deleteRestaurantMenuCategory,
+  createRestaurantMenuItem,
+  updateRestaurantMenuItem,
+  deleteRestaurantMenuItem,
+  toggleRestaurantMenuItemAvailability,
+} from '../services/menuService';
+import {
+  fetchRestaurantOffers,
+  createRestaurantOffer,
+  updateRestaurantOffer,
+  deleteRestaurantOffer,
+  toggleRestaurantOfferStatus,
+} from '../services/offerService';
+import {
+  updateRestaurantDbSettings,
+} from '../services/deliveryAreaService';
+import {
   INITIAL_CATEGORIES,
   INITIAL_MENU_ITEMS,
   INITIAL_OFFERS,
@@ -99,6 +120,15 @@ interface AppContextType {
   // Profile & Restaurant Updates
   updateOwner: (updated: Partial<RestaurantOwner>) => void;
   updateRestaurant: (updated: Partial<RestaurantProfile>) => void;
+  updateRestaurantSettingsDb: (updates: {
+    name?: string;
+    description?: string;
+    phone?: string;
+    address?: string;
+    is_open?: boolean;
+    delivery_fee?: number;
+    max_delivery_radius_km?: number;
+  }) => Promise<{ success: boolean; error?: string }>;
   setRegistrationStatus: (status: RegistrationStatus, reason?: string) => void;
   registerRestaurantReal: (payload: CreateRestaurantPayload) => Promise<CreateRestaurantResult>;
   registerRestaurant: (ownerData: Omit<RestaurantOwner, 'id'>, restData: Partial<RestaurantProfile>) => Promise<CreateRestaurantResult>;
@@ -106,22 +136,39 @@ interface AppContextType {
   // Categories & Menu
   categories: MenuCategory[];
   menuItems: MenuItem[];
+  menuLoading: boolean;
+  menuError: string | null;
+  reloadMenu: () => Promise<void>;
   addCategory: (name: string, description?: string) => void;
+  addCategoryAsync: (name: string, description?: string) => Promise<{ success: boolean; error?: string; category?: MenuCategory }>;
   updateCategory: (id: string, updated: Partial<MenuCategory>) => void;
+  updateCategoryAsync: (id: string, updated: Partial<MenuCategory>) => Promise<{ success: boolean; error?: string }>;
   deleteCategory: (id: string) => boolean;
+  deleteCategoryAsync: (id: string) => Promise<{ success: boolean; error?: string }>;
   reorderCategories: (orderedIds: string[]) => void;
 
   addItem: (item: Omit<MenuItem, 'id'>) => void;
+  addItemAsync: (item: Omit<MenuItem, 'id'>) => Promise<{ success: boolean; error?: string; item?: MenuItem }>;
   updateItem: (id: string, updated: Partial<MenuItem>) => void;
+  updateItemAsync: (id: string, updated: Partial<MenuItem>) => Promise<{ success: boolean; error?: string }>;
   deleteItem: (id: string) => void;
+  deleteItemAsync: (id: string) => Promise<{ success: boolean; error?: string }>;
   toggleItemAvailability: (id: string) => void;
+  toggleItemAvailabilityAsync: (id: string) => Promise<{ success: boolean; error?: string }>;
 
   // Offers
   offers: Offer[];
+  offersLoading: boolean;
+  offersError: string | null;
+  reloadOffers: () => Promise<void>;
   addOffer: (offer: Omit<Offer, 'id'>) => void;
+  addOfferAsync: (offer: Omit<Offer, 'id'>) => Promise<{ success: boolean; error?: string; offer?: Offer }>;
   updateOffer: (id: string, updated: Partial<Offer>) => void;
+  updateOfferAsync: (id: string, updated: Partial<Offer>) => Promise<{ success: boolean; error?: string }>;
   deleteOffer: (id: string) => void;
+  deleteOfferAsync: (id: string) => Promise<{ success: boolean; error?: string }>;
   toggleOfferStatus: (id: string) => void;
+  toggleOfferStatusAsync: (id: string) => Promise<{ success: boolean; error?: string }>;
 
   // Orders
   orders: Order[];
@@ -183,7 +230,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Operational states: Start empty (no fake mock data presented as real database records)
   const [categories, setCategories] = useState<MenuCategory[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [menuLoading, setMenuLoading] = useState<boolean>(false);
+  const [menuError, setMenuError] = useState<string | null>(null);
+
   const [offers, setOffers] = useState<Offer[]>([]);
+  const [offersLoading, setOffersLoading] = useState<boolean>(false);
+  const [offersError, setOffersError] = useState<string | null>(null);
+
   const [orders, setOrders] = useState<Order[]>([]);
   const [movements, setMovements] = useState<FinancialMovement[]>([]);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
@@ -191,6 +244,66 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const isAuthenticated = Boolean(session && user);
   const hasRestaurant = Boolean(dbRestaurant && dbRestaurant.id);
+
+  // Load Menu Data from Supabase
+  const loadMenuData = useCallback(async (restaurantId: string) => {
+    if (!restaurantId) return;
+    setMenuLoading(true);
+    setMenuError(null);
+    try {
+      const [catsRes, itemsRes] = await Promise.all([
+        fetchRestaurantMenuCategories(restaurantId),
+        fetchRestaurantMenuItems(restaurantId),
+      ]);
+
+      if (catsRes.error) {
+        setMenuError(catsRes.error);
+      } else if (catsRes.data) {
+        setCategories(catsRes.data);
+      }
+
+      if (itemsRes.error) {
+        setMenuError((prev) => (prev ? `${prev} | ${itemsRes.error}` : itemsRes.error));
+      } else if (itemsRes.data) {
+        setMenuItems(itemsRes.data);
+      }
+    } catch (err: any) {
+      setMenuError(err?.message || 'فشل جلب بيانات المنيو من قاعدة البيانات.');
+    } finally {
+      setMenuLoading(false);
+    }
+  }, []);
+
+  // Load Offers Data from Supabase
+  const loadOffersData = useCallback(async (restaurantId: string) => {
+    if (!restaurantId) return;
+    setOffersLoading(true);
+    setOffersError(null);
+    try {
+      const res = await fetchRestaurantOffers(restaurantId);
+      if (res.error) {
+        setOffersError(res.error);
+      } else if (res.data) {
+        setOffers(res.data);
+      }
+    } catch (err: any) {
+      setOffersError(err?.message || 'فشل جلب بيانات العروض من قاعدة البيانات.');
+    } finally {
+      setOffersLoading(false);
+    }
+  }, []);
+
+  const reloadMenu = useCallback(async () => {
+    if (dbRestaurant?.id) {
+      await loadMenuData(dbRestaurant.id);
+    }
+  }, [dbRestaurant?.id, loadMenuData]);
+
+  const reloadOffers = useCallback(async () => {
+    if (dbRestaurant?.id) {
+      await loadOffersData(dbRestaurant.id);
+    }
+  }, [dbRestaurant?.id, loadOffersData]);
 
   // Translate Supabase Auth Error to Egyptian Arabic
   const translateAuthError = (message: string): string => {
@@ -292,15 +405,24 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           ownerName
         );
         setRestaurant(mapped);
+
+        // تحميل أقسام وأصناف وعروض المطعم الحقيقي من جداول Supabase الفعلية
+        await Promise.all([
+          loadMenuData(restResult.restaurant.id),
+          loadOffersData(restResult.restaurant.id),
+        ]);
       } else {
         setDbRestaurant(null);
         setRestaurant({
           ...EMPTY_RESTAURANT,
           registrationStatus: 'NOT_REGISTERED',
         });
+        setCategories([]);
+        setMenuItems([]);
+        setOffers([]);
       }
     },
-    [mapDbRestaurantToProfile]
+    [mapDbRestaurantToProfile, loadMenuData, loadOffersData]
   );
 
   // Initialize and listen to Supabase Auth session
@@ -546,6 +668,39 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setRestaurant((prev) => ({ ...prev, ...updated }));
   };
 
+  // Real Database Update for Restaurant Settings
+  const updateRestaurantSettingsDb = async (updates: {
+    name?: string;
+    description?: string;
+    phone?: string;
+    address?: string;
+    is_open?: boolean;
+    delivery_fee?: number;
+    max_delivery_radius_km?: number;
+  }): Promise<{ success: boolean; error?: string }> => {
+    if (!restaurant.id) {
+      return { success: false, error: 'معرف المطعم غير متوفر لحفظ الإعدادات في قاعدة البيانات.' };
+    }
+
+    const res = await updateRestaurantDbSettings(restaurant.id, updates);
+    if (res.error) {
+      return { success: false, error: res.error };
+    }
+
+    setRestaurant((prev) => ({
+      ...prev,
+      name: updates.name !== undefined ? updates.name : prev.name,
+      description: updates.description !== undefined ? updates.description : prev.description,
+      phone: updates.phone !== undefined ? updates.phone : prev.phone,
+      address: updates.address !== undefined ? updates.address : prev.address,
+      isOpen: updates.is_open !== undefined ? updates.is_open : prev.isOpen,
+      deliveryFee: updates.delivery_fee !== undefined ? updates.delivery_fee : prev.deliveryFee,
+      deliveryRadiusKm: updates.max_delivery_radius_km !== undefined ? updates.max_delivery_radius_km : prev.deliveryRadiusKm,
+    }));
+
+    return { success: true };
+  };
+
   const setRegistrationStatus = (status: RegistrationStatus, reason?: string) => {
     setRestaurant((prev) => ({
       ...prev,
@@ -554,77 +709,237 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }));
   };
 
-  // Menu Categories
+  // Menu Categories - Real Database Operations
+  const addCategoryAsync = async (
+    name: string,
+    description?: string
+  ): Promise<{ success: boolean; error?: string; category?: MenuCategory }> => {
+    if (!restaurant.id) {
+      return { success: false, error: 'لم يتم العثور على مطعم مسجل لحسابك.' };
+    }
+
+    const nextSort = categories.length + 1;
+    const res = await createRestaurantMenuCategory(restaurant.id, name, nextSort);
+    if (res.error || !res.data) {
+      return { success: false, error: res.error || 'فشل حفظ القسم في قاعدة البيانات.' };
+    }
+
+    setCategories((prev) => [...prev, res.data!]);
+    return { success: true, category: res.data };
+  };
+
   const addCategory = (name: string, description?: string) => {
-    const newCat: MenuCategory = {
-      id: `cat-${Date.now()}`,
-      name,
-      description,
-      sortOrder: categories.length + 1,
-      isVisible: true,
-    };
-    setCategories((prev) => [...prev, newCat]);
+    addCategoryAsync(name, description);
+  };
+
+  const updateCategoryAsync = async (
+    id: string,
+    updated: Partial<MenuCategory>
+  ): Promise<{ success: boolean; error?: string }> => {
+    const res = await updateRestaurantMenuCategory(id, {
+      name: updated.name,
+      sortOrder: updated.sortOrder,
+      isVisible: updated.isVisible,
+    });
+
+    if (res.error) {
+      return { success: false, error: res.error };
+    }
+
+    setCategories((prev) => prev.map((c) => (c.id === id ? { ...c, ...updated } : c)));
+    return { success: true };
   };
 
   const updateCategory = (id: string, updated: Partial<MenuCategory>) => {
-    setCategories((prev) => prev.map((c) => (c.id === id ? { ...c, ...updated } : c)));
+    updateCategoryAsync(id, updated);
+  };
+
+  const deleteCategoryAsync = async (
+    id: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    const res = await deleteRestaurantMenuCategory(id);
+    if (res.error) {
+      return { success: false, error: res.error };
+    }
+
+    setCategories((prev) => prev.filter((c) => c.id !== id));
+    return { success: true };
   };
 
   const deleteCategory = (id: string): boolean => {
-    const hasItems = menuItems.some((i) => i.categoryId === id);
-    if (hasItems) return false;
-    setCategories((prev) => prev.filter((c) => c.id !== id));
+    deleteCategoryAsync(id);
     return true;
   };
 
   const reorderCategories = (orderedIds: string[]) => {
     setCategories((prev) => {
       const map = new Map(prev.map((c) => [c.id, c]));
-      return orderedIds.map((id, index) => ({
-        ...map.get(id)!,
-        sortOrder: index + 1,
-      }));
+      return orderedIds.map((id, index) => {
+        const item = map.get(id);
+        const sortOrder = index + 1;
+        if (item) {
+          updateRestaurantMenuCategory(id, { sortOrder }).catch(console.warn);
+          return { ...item, sortOrder };
+        }
+        return item!;
+      }).filter(Boolean);
     });
   };
 
-  // Menu items
+  // Menu Items - Real Database Operations
+  const addItemAsync = async (
+    item: Omit<MenuItem, 'id'>
+  ): Promise<{ success: boolean; error?: string; item?: MenuItem }> => {
+    if (!restaurant.id) {
+      return { success: false, error: 'لم يتم العثور على مطعم مسجل لحسابك.' };
+    }
+
+    const res = await createRestaurantMenuItem(restaurant.id, item);
+    if (res.error || !res.data) {
+      return { success: false, error: res.error || 'فشل حفظ الصنف في قاعدة البيانات.' };
+    }
+
+    setMenuItems((prev) => [...prev, res.data!]);
+    return { success: true, item: res.data };
+  };
+
   const addItem = (item: Omit<MenuItem, 'id'>) => {
-    const newItem: MenuItem = { ...item, id: `item-${Date.now()}` };
-    setMenuItems((prev) => [...prev, newItem]);
+    addItemAsync(item);
+  };
+
+  const updateItemAsync = async (
+    id: string,
+    updated: Partial<MenuItem>
+  ): Promise<{ success: boolean; error?: string }> => {
+    if (!restaurant.id) {
+      return { success: false, error: 'معرف المطعم غير متوفر.' };
+    }
+
+    const res = await updateRestaurantMenuItem(restaurant.id, id, updated);
+    if (res.error) {
+      return { success: false, error: res.error };
+    }
+
+    setMenuItems((prev) => prev.map((i) => (i.id === id ? { ...i, ...updated } : i)));
+    return { success: true };
   };
 
   const updateItem = (id: string, updated: Partial<MenuItem>) => {
-    setMenuItems((prev) => prev.map((i) => (i.id === id ? { ...i, ...updated } : i)));
+    updateItemAsync(id, updated);
   };
 
-  const deleteItem = (id: string) => {
-    setMenuItems((prev) => prev.filter((i) => i.id !== id));
+  const toggleItemAvailabilityAsync = async (
+    id: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    const target = menuItems.find((i) => i.id === id);
+    if (!target) return { success: false, error: 'الصنف غير موجود.' };
+
+    const nextState = !target.isAvailable;
+    const res = await toggleRestaurantMenuItemAvailability(id, nextState);
+    if (res.error) {
+      return { success: false, error: res.error };
+    }
+
+    setMenuItems((prev) =>
+      prev.map((i) => (i.id === id ? { ...i, isAvailable: nextState } : i))
+    );
+    return { success: true };
   };
 
   const toggleItemAvailability = (id: string) => {
-    setMenuItems((prev) =>
-      prev.map((i) => (i.id === id ? { ...i, isAvailable: !i.isAvailable } : i))
-    );
+    toggleItemAvailabilityAsync(id);
   };
 
-  // Offers
+  const deleteItemAsync = async (
+    id: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    const res = await deleteRestaurantMenuItem(id);
+    if (res.error) {
+      return { success: false, error: res.error };
+    }
+
+    setMenuItems((prev) => prev.filter((i) => i.id !== id));
+    return { success: true };
+  };
+
+  const deleteItem = (id: string) => {
+    deleteItemAsync(id);
+  };
+
+  // Offers - Real Database Operations
+  const addOfferAsync = async (
+    offer: Omit<Offer, 'id'>
+  ): Promise<{ success: boolean; error?: string; offer?: Offer }> => {
+    if (!restaurant.id) {
+      return { success: false, error: 'لم يتم العثور على مطعم مسجل لحسابك.' };
+    }
+
+    const res = await createRestaurantOffer(restaurant.id, offer);
+    if (res.error || !res.data) {
+      return { success: false, error: res.error || 'فشل حفظ العرض في قاعدة البيانات.' };
+    }
+
+    setOffers((prev) => [res.data!, ...prev]);
+    return { success: true, offer: res.data };
+  };
+
   const addOffer = (offer: Omit<Offer, 'id'>) => {
-    const newOff: Offer = { ...offer, id: `offer-${Date.now()}`, sortOrder: offers.length + 1 };
-    setOffers((prev) => [...prev, newOff]);
+    addOfferAsync(offer);
+  };
+
+  const updateOfferAsync = async (
+    id: string,
+    updated: Partial<Offer>
+  ): Promise<{ success: boolean; error?: string }> => {
+    const res = await updateRestaurantOffer(id, updated);
+    if (res.error) {
+      return { success: false, error: res.error };
+    }
+
+    setOffers((prev) => prev.map((o) => (o.id === id ? { ...o, ...updated } : o)));
+    return { success: true };
   };
 
   const updateOffer = (id: string, updated: Partial<Offer>) => {
-    setOffers((prev) => prev.map((o) => (o.id === id ? { ...o, ...updated } : o)));
+    updateOfferAsync(id, updated);
   };
 
-  const deleteOffer = (id: string) => {
-    setOffers((prev) => prev.filter((o) => o.id !== id));
+  const toggleOfferStatusAsync = async (
+    id: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    const target = offers.find((o) => o.id === id);
+    if (!target) return { success: false, error: 'العرض غير موجود.' };
+
+    const nextActive = target.status !== 'ACTIVE';
+    const res = await toggleRestaurantOfferStatus(id, nextActive);
+    if (res.error) {
+      return { success: false, error: res.error };
+    }
+
+    setOffers((prev) =>
+      prev.map((o) => (o.id === id ? { ...o, status: nextActive ? 'ACTIVE' : 'PAUSED' } : o))
+    );
+    return { success: true };
   };
 
   const toggleOfferStatus = (id: string) => {
-    setOffers((prev) =>
-      prev.map((o) => (o.id === id ? { ...o, status: o.status === 'ACTIVE' ? 'PAUSED' : 'ACTIVE' } : o))
-    );
+    toggleOfferStatusAsync(id);
+  };
+
+  const deleteOfferAsync = async (
+    id: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    const res = await deleteRestaurantOffer(id);
+    if (res.error) {
+      return { success: false, error: res.error };
+    }
+
+    setOffers((prev) => prev.filter((o) => o.id !== id));
+    return { success: true };
+  };
+
+  const deleteOffer = (id: string) => {
+    deleteOfferAsync(id);
   };
 
   // Orders
@@ -824,24 +1139,42 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         refreshRestaurant,
         updateOwner,
         updateRestaurant,
+        updateRestaurantSettingsDb,
         setRegistrationStatus,
         registerRestaurantReal,
         registerRestaurant,
         categories,
         menuItems,
+        menuLoading,
+        menuError,
+        reloadMenu,
         addCategory,
+        addCategoryAsync,
         updateCategory,
+        updateCategoryAsync,
         deleteCategory,
+        deleteCategoryAsync,
         reorderCategories,
         addItem,
+        addItemAsync,
         updateItem,
+        updateItemAsync,
         deleteItem,
+        deleteItemAsync,
         toggleItemAvailability,
+        toggleItemAvailabilityAsync,
         offers,
+        offersLoading,
+        offersError,
+        reloadOffers,
         addOffer,
+        addOfferAsync,
         updateOffer,
+        updateOfferAsync,
         deleteOffer,
+        deleteOfferAsync,
         toggleOfferStatus,
+        toggleOfferStatusAsync,
         orders,
         acceptOrder,
         rejectOrder,
