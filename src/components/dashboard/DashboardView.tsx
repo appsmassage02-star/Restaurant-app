@@ -31,8 +31,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const recentOrders = orders.slice(0, 5);
 
-  const getStatusBadge = (status: string, rawStatus?: string) => {
-    const label = getArabicStatusLabel(rawStatus || status);
+  const getStatusBadge = (status: string, rawStatus?: string, fulfillmentRoute?: string) => {
+    const label = getArabicStatusLabel(rawStatus || status, fulfillmentRoute);
     switch (status) {
       case 'PENDING':
         return (
@@ -44,6 +44,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       case 'ACCEPTED':
         return (
           <span className="px-2.5 py-1 text-xs font-bold rounded-lg bg-blue-100 text-blue-800 border border-blue-200">
+            {label}
+          </span>
+        );
+      case 'AWAITING_DRIVER':
+        return (
+          <span className="px-2.5 py-1 text-xs font-bold rounded-lg bg-sky-100 text-sky-800 border border-sky-200 flex items-center gap-1 w-fit">
+            <Clock className="w-3 h-3 text-sky-600" />
+            {label}
+          </span>
+        );
+      case 'ASSIGNED_TO_DRIVER':
+        return (
+          <span className="px-2.5 py-1 text-xs font-bold rounded-lg bg-indigo-100 text-indigo-800 border border-indigo-200 flex items-center gap-1 w-fit">
+            <Truck className="w-3 h-3 text-indigo-600" />
             {label}
           </span>
         );
@@ -274,7 +288,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         صافي المطعم: {ord.netRestaurantDue.toLocaleString('ar-EG')} ج.م
                       </span>
                     </td>
-                    <td className="py-3.5 px-4">{getStatusBadge(ord.status, ord.rawStatus)}</td>
+                    <td className="py-3.5 px-4">{getStatusBadge(ord.status, ord.rawStatus, ord.rawRoute || ord.route)}</td>
                     <td className="py-3.5 px-4 text-center">
                       <button
                         onClick={() => onOpenOrderDetails(ord)}

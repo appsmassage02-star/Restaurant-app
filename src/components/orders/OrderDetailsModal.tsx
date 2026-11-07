@@ -135,14 +135,29 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
     rawStatus === 'ready' || order.status === 'READY';
 
   // Rule 1: Check unresolved missing items
-  const hasUnresolvedMissingItems = workflowItems.some(
-    (item) =>
-      item.available_quantity !== null &&
-      item.available_quantity < item.requested_quantity &&
-      item.is_customer_approved !== true &&
-      item.customer_decision !== 'remove_item' &&
-      item.customer_decision !== 'approved_replacement'
-  );
+  // احسب الكمية المطلوبة من ordered_quantity
+  // لا يعتبر الصنف مكتملاً لمجرد تسجيل الكمية المتاحة إذا كان يحتاج إلى قرار العميل
+  const hasUnresolvedMissingItems = workflowItems.some((item) => {
+    const ordered = Number(item.ordered_quantity ?? item.requested_quantity ?? 1);
+    const available = item.available_quantity;
+    if (available === null || available === undefined) {
+      return false; // لم يُسجل نقص في هذا الصنف
+    }
+    if (available >= ordered) {
+      return false; // الصنف متوفر بالكامل
+    }
+
+    // هنا توجد كمية ناقصة: يجب حسمها بقرار العميل المعتمد (remove_shortage أو substitute)
+    const isApproved = item.customer_approved === true || item.is_customer_approved === true;
+    const res = item.resolution ?? item.customer_decision;
+    const hasValidResolution =
+      res === 'remove_shortage' ||
+      res === 'substitute' ||
+      res === 'remove_item' ||
+      res === 'approved_replacement';
+
+    return !(isApproved && hasValidResolution);
+  });
 
   // Rule 2: For driver_delivery (COURIER_PHONE), preparation is blocked until driver is assigned
   const isDriverDelivery =
@@ -204,6 +219,15 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
   };
 
   const handleStartPreparing = async () => {
+    if (hasUnresolvedMissingItems) {
+      setActionError('لا يمكن بدء التجهيز: توجد أصناف ناقصة بانتظار قرار العميل.');
+      return;
+    }
+    if (isDriverDelivery && !isDriverAssigned) {
+      setActionError('لا يمكن بدء التجهيز: في دليفري طلباتي يجب إسناد طيار أولاً (assigned_to_driver).');
+      return;
+    }
+
     setActionError(null);
     setActionSuccess(null);
     setIsSubmitting(true);
@@ -308,7 +332,7 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
                   })}
                 </span>
                 <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-200">
-                  {getArabicStatusLabel(order.rawStatus || order.status)}
+                  {getArabicStatusLabel(order.rawStatus || order.status, order.rawRoute || order.route)}
                 </span>
               </div>
               <p className="text-xs text-slate-500">
@@ -527,14 +551,24 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
                     (w) =>
                       w.order_item_id === itemId ||
                       w.item_name === item.name ||
-                      w.item_name_snapshot === item.name
+                      (w as any).item_name_snapshot === item.name
                   );
 
-                  const isEditingQty = editingItemQtyId === (wf?.order_item_id || itemId);
+                  const orderedQty = Number(
+                    wf?.ordered_quantity ?? wf?.requested_quantity ?? item.quantity
+                  );
+                  const availableQty = wf?.available_quantity;
+                  const approvedQty = wf?.approved_quantity ?? wf?.customer_approved_quantity;
                   const isShortage =
-                    wf &&
-                    wf.available_quantity !== null &&
-                    wf.available_quantity < wf.requested_quantity;
+                    availableQty !== null &&
+                    availableQty !== undefined &&
+                    availableQty < orderedQty;
+
+                  const resolution = wf?.resolution ?? wf?.customer_decision;
+                  const subName = wf?.substitute_name ?? wf?.substitute_item_name;
+                  const subPrice = wf?.substitute_unit_price ?? wf?.substitute_price;
+
+                  const isEditingQty = editingItemQtyId === (wf?.order_item_id || itemId);
 
                   return (
                     <div key={idx} className="p-3 bg-white hover:bg-slate-50/50 transition-colors space-y-2">
@@ -542,7 +576,7 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
                         <div className="flex-1">
                           <div className="flex items-center gap-2">
                             <span className="w-5 h-5 rounded-md bg-amber-100 text-amber-800 font-bold flex items-center justify-center text-xs">
-                              {item.quantity}×
+                              {orderedQty}×
                             </span>
                             <span className="font-bold text-slate-900 text-xs">{item.name}</span>
                           </div>
@@ -556,7 +590,7 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
 
                         <div className="text-left font-bold text-slate-900 shrink-0">
                           <span>{rowTotal.toLocaleString('ar-EG')} ج.م</span>
-                          {item.quantity > 1 && (
+                          {orderedQty > 1 && (
                             <span className="block text-[10px] text-slate-400 font-normal">
                               ({item.priceAtOrder} ج.م للقطعة)
                             </span>
@@ -568,32 +602,46 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
                       <div className="bg-slate-50 p-2 rounded-xl border border-slate-200 flex flex-wrap items-center justify-between gap-2 text-[11px]">
                         <div className="flex items-center gap-2">
                           <span className="text-slate-500 font-medium">الكمية المطلوبة:</span>
-                          <span className="font-bold text-slate-800">{wf?.requested_quantity ?? item.quantity}</span>
+                          <span className="font-bold text-slate-800">{orderedQty}</span>
 
                           <span className="text-slate-400">|</span>
 
                           <span className="text-slate-500 font-medium">المتوفر بالمطبخ:</span>
                           <span className="font-bold text-slate-900">
-                            {wf?.available_quantity !== null && wf?.available_quantity !== undefined
-                              ? `${wf.available_quantity} قطعة`
-                              : `${item.quantity} قطعة (افتراضي)`}
+                            {availableQty !== null && availableQty !== undefined
+                              ? `${availableQty} قطعة`
+                              : `${orderedQty} قطعة (افتراضي)`}
                           </span>
+
+                          {approvedQty !== null && approvedQty !== undefined && (
+                            <>
+                              <span className="text-slate-400">|</span>
+                              <span className="text-slate-500 font-medium">الكمية المعتمدة:</span>
+                              <span className="font-bold text-emerald-800">{approvedQty} قطعة</span>
+                            </>
+                          )}
                         </div>
 
                         {/* Customer Decision Badge */}
                         {isShortage && (
                           <div className="flex items-center gap-1.5">
-                            {wf.customer_decision === 'approved_replacement' ? (
+                            {resolution === 'remove_shortage' || resolution === 'remove_item' ? (
                               <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-md font-bold text-[10px] flex items-center gap-1">
                                 <CheckCircle className="w-3 h-3 text-emerald-600" />
                                 <span>
-                                  وافق العميل على البديل: {wf.substitute_item_name || 'بديل معتمد'} ({wf.substitute_price ?? 0} ج.م)
+                                  وافق العميل على حذف الكمية الناقصة
+                                  {approvedQty !== null && approvedQty !== undefined
+                                    ? ` (المعتمد: ${approvedQty} قطعة)`
+                                    : ''}
                                 </span>
                               </span>
-                            ) : wf.customer_decision === 'remove_item' ? (
-                              <span className="px-2 py-0.5 bg-rose-100 text-rose-800 border border-rose-200 rounded-md font-bold text-[10px] flex items-center gap-1">
-                                <XCircle className="w-3 h-3 text-rose-600" />
-                                <span>تم حذف الصنف من الفاتورة بناءً على اختيار العميل</span>
+                            ) : resolution === 'substitute' || resolution === 'approved_replacement' ? (
+                              <span className="px-2 py-0.5 bg-blue-100 text-blue-800 border border-blue-200 rounded-md font-bold text-[10px] flex items-center gap-1">
+                                <CheckCircle className="w-3 h-3 text-blue-600" />
+                                <span>
+                                  وافق العميل على البديل: {subName || 'صنف بديل'}
+                                  {subPrice !== null && subPrice !== undefined ? ` (${subPrice} ج.م)` : ''}
+                                </span>
                               </span>
                             ) : (
                               <span className="px-2 py-0.5 bg-amber-100 text-amber-800 border border-amber-300 rounded-md font-bold text-[10px] flex items-center gap-1 animate-pulse">
@@ -612,7 +660,7 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
                                 <input
                                   type="number"
                                   min="0"
-                                  max={wf?.requested_quantity ?? item.quantity}
+                                  max={orderedQty}
                                   value={editingQtyValue}
                                   onChange={(e) => setEditingQtyValue(parseInt(e.target.value) || 0)}
                                   className="w-14 px-2 py-0.5 bg-white border border-amber-400 rounded-md font-bold text-center text-xs"
@@ -636,7 +684,7 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
                               <button
                                 onClick={() => {
                                   setEditingItemQtyId(wf?.order_item_id || itemId);
-                                  setEditingQtyValue(wf?.available_quantity ?? item.quantity);
+                                  setEditingQtyValue(availableQty ?? orderedQty);
                                 }}
                                 className="px-2 py-0.5 bg-white hover:bg-amber-50 text-amber-800 font-bold border border-slate-200 rounded-md text-[10px] cursor-pointer"
                               >
@@ -726,7 +774,7 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
                   <span className="absolute -right-[19px] top-1 w-2.5 h-2.5 rounded-full bg-amber-500 ring-2 ring-white" />
                   <div className="flex items-center gap-2">
                     <span className="font-bold text-slate-800">
-                      {getArabicStatusLabel(h.rawStatus || h.status)}
+                      {getArabicStatusLabel(h.rawStatus || h.status, order.rawRoute || order.route)}
                     </span>
                     <span className="text-slate-400 font-mono text-[10px]">
                       {new Date(h.timestamp).toLocaleTimeString('ar-EG')}

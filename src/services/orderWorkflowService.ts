@@ -185,31 +185,56 @@ export async function getOrderWorkflow(
       }
     }
 
-    const items: DbOrderWorkflowItem[] = rawItems.map((item: any) => ({
-      order_item_id: item.order_item_id || item.id || '',
-      item_name: item.item_name || item.item_name_snapshot || '',
-      item_name_snapshot: item.item_name_snapshot || item.item_name || '',
-      requested_quantity: Number(item.requested_quantity ?? item.quantity ?? 1),
-      available_quantity:
+    const items: DbOrderWorkflowItem[] = rawItems.map((item: any) => {
+      const orderedQty = Number(
+        item.ordered_quantity ?? item.requested_quantity ?? item.quantity ?? 1
+      );
+      const availableQty =
         item.available_quantity !== undefined && item.available_quantity !== null
           ? Number(item.available_quantity)
-          : null,
-      customer_approved_quantity:
-        item.customer_approved_quantity !== undefined && item.customer_approved_quantity !== null
+          : null;
+      const approvedQty =
+        item.approved_quantity !== undefined && item.approved_quantity !== null
+          ? Number(item.approved_quantity)
+          : item.customer_approved_quantity !== undefined &&
+            item.customer_approved_quantity !== null
           ? Number(item.customer_approved_quantity)
-          : null,
-      customer_decision: item.customer_decision ?? null,
-      substitute_item_name: item.substitute_item_name ?? null,
-      substitute_price:
-        item.substitute_price !== undefined && item.substitute_price !== null
-          ? Number(item.substitute_price)
-          : null,
-      is_customer_approved:
-        item.is_customer_approved !== undefined && item.is_customer_approved !== null
+          : null;
+      const isApproved =
+        item.customer_approved !== undefined && item.customer_approved !== null
+          ? Boolean(item.customer_approved)
+          : item.is_customer_approved !== undefined && item.is_customer_approved !== null
           ? Boolean(item.is_customer_approved)
-          : null,
-      status: item.status ?? null,
-    }));
+          : null;
+      const resolution = item.resolution ?? item.customer_decision ?? null;
+      const subName = item.substitute_name ?? item.substitute_item_name ?? null;
+      const subPrice =
+        item.substitute_unit_price !== undefined && item.substitute_unit_price !== null
+          ? Number(item.substitute_unit_price)
+          : item.substitute_price !== undefined && item.substitute_price !== null
+          ? Number(item.substitute_price)
+          : null;
+
+      return {
+        order_item_id: item.order_item_id || item.id || '',
+        item_name: item.item_name || item.item_name_snapshot || '',
+        ordered_quantity: orderedQty,
+        available_quantity: availableQty,
+        availability_status: item.availability_status ?? item.status ?? null,
+        approved_quantity: approvedQty,
+        resolution,
+        substitute_name: subName,
+        substitute_unit_price: subPrice,
+        customer_approved: isApproved,
+        // توافقية داخلية
+        requested_quantity: orderedQty,
+        customer_decision: resolution,
+        substitute_item_name: subName,
+        substitute_price: subPrice,
+        is_customer_approved: isApproved,
+        customer_approved_quantity: approvedQty,
+      };
+    });
 
     return { success: true, data: items };
   } catch (err: any) {

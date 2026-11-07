@@ -38,14 +38,24 @@ export function mapDbRouteToExecutionRoute(dbRoute: string): ExecutionRoute {
 
 /**
  * تحويل حالة الطلب الفعلية في قاعدة البيانات إلى تصنيف واجهة المطعم
+ * الطلب الذي حالته الفعلية accepted ومسار توصيله driver_delivery
+ * يظهر في تصنيف «بانتظار تأمين طيار» إلى أن يتم إسناد الطيار
  */
-export function mapDbStatusToOrderStatus(dbStatus: string): OrderStatus {
+export function mapDbStatusToOrderStatus(
+  dbStatus: string,
+  fulfillmentRoute?: string
+): OrderStatus {
   const s = (dbStatus || '').toLowerCase().trim();
+  const route = (fulfillmentRoute || '').toLowerCase().trim();
+
   switch (s) {
     case 'pending':
     case 'awaiting_restaurant_confirmation':
       return 'PENDING';
     case 'accepted':
+      if (route === 'driver_delivery' || route === 'courier_phone') {
+        return 'AWAITING_DRIVER';
+      }
       return 'ACCEPTED';
     case 'awaiting_driver':
     case 'searching_driver':
@@ -78,30 +88,38 @@ export function mapDbStatusToOrderStatus(dbStatus: string): OrderStatus {
 /**
  * الحصول على تسمية الحالة بالعربية الفصحى الدقيقة
  */
-export function getArabicStatusLabel(dbStatus: string | OrderStatus): string {
+export function getArabicStatusLabel(
+  dbStatus: string | OrderStatus,
+  fulfillmentRoute?: string
+): string {
   const s = String(dbStatus || '').toLowerCase().trim();
+  const r = String(fulfillmentRoute || '').toLowerCase().trim();
+
   switch (s) {
     case 'pending':
       return 'بانتظار القبول';
     case 'awaiting_restaurant_confirmation':
       return 'بانتظار موافقة المطعم';
     case 'accepted':
+      if (r === 'driver_delivery' || r === 'courier_phone') {
+        return 'بانتظار تأمين طيار';
+      }
       return 'تم القبول';
     case 'awaiting_driver':
     case 'searching_driver':
     case 'awaiting_driver_assignment':
-      return 'بانتظار تأمين سائق';
+      return 'بانتظار تأمين طيار';
     case 'assigned_to_driver':
     case 'driver_assigned':
-      return 'تم تأمين السائق';
+      return 'تم إسناد الطيار';
     case 'preparing':
       return 'جاري التجهيز';
     case 'ready':
       return 'جاهز للتسليم';
     case 'picked_up':
-      return 'تم الاستلام';
+      return 'تم استلام المندوب';
     case 'on_the_way':
-      return 'في الطريق';
+      return 'في الطريق للعميل';
     case 'delivered':
       return 'تم التوصيل';
     case 'completed':
@@ -186,7 +204,7 @@ export function mapDbOrderToAppOrder(
 
   // تحويل سجل الحالات الفعلي فقط من قاعدة البيانات (دون اختراع سجلات وهمية)
   const history: OrderStatusHistory[] = statusHistory.map((h) => ({
-    status: mapDbStatusToOrderStatus(h.new_status),
+    status: mapDbStatusToOrderStatus(h.new_status, dbOrder.fulfillment_route),
     rawStatus: h.new_status,
     timestamp: h.created_at || dbOrder.created_at,
     note: h.note || undefined,
@@ -222,7 +240,7 @@ export function mapDbOrderToAppOrder(
     paymentMethod: dbOrder.payment_method || 'CASH_ON_DELIVERY',
     route: mapDbRouteToExecutionRoute(dbOrder.fulfillment_route),
     rawRoute: dbOrder.fulfillment_route,
-    status: mapDbStatusToOrderStatus(dbOrder.status),
+    status: mapDbStatusToOrderStatus(dbOrder.status, dbOrder.fulfillment_route),
     rawStatus: dbOrder.status,
     rejectionReason: dbOrder.cancellation_reason || undefined,
     statusHistory: history,

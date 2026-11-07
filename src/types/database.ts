@@ -177,16 +177,22 @@ export interface DbRestaurantOrderStatusHistory {
 
 export interface DbOrderWorkflowItem {
   order_item_id: string;
-  item_name?: string;
-  item_name_snapshot?: string;
-  requested_quantity: number;
+  item_name: string;
+  ordered_quantity: number;
   available_quantity: number | null;
-  customer_approved_quantity: number | null;
-  customer_decision: 'remove_missing' | 'accept_substitute' | 'pending' | string | null;
+  availability_status?: string | null;
+  approved_quantity?: number | null;
+  resolution?: 'remove_shortage' | 'substitute' | string | null;
+  substitute_name?: string | null;
+  substitute_unit_price?: number | null;
+  customer_approved?: boolean | null;
+  // توافقية للتطبيق
+  requested_quantity?: number;
+  customer_decision?: string | null;
   substitute_item_name?: string | null;
   substitute_price?: number | null;
-  is_customer_approved: boolean | null;
-  status?: string | null;
+  is_customer_approved?: boolean | null;
+  customer_approved_quantity?: number | null;
 }
 
 export interface DbPendingCancellation {
