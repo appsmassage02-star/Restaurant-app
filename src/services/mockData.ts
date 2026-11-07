@@ -31,6 +31,7 @@ export const INITIAL_RESTAURANT: RestaurantProfile = {
   deliveryRadiusKm: 6.5,
   maxAllowedRadiusKm: 12.0, // حد إداري أقصى
   deliveryFee: 25.0, // رسوم التوصيل المحددة وفق اتفاق الإدارة
+  restaurantDeliveryEnabled: true,
   isOpen: true,
   openingHours: 'يوميًا من 11:00 صباحًا حتى 02:00 بعد منتصف الليل',
   holidays: 'يعمل طوال أيام الأسبوع بدون إجازات أسبوعية',

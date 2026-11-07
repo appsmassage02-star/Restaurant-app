@@ -1,10 +1,17 @@
+import { DbOrderWorkflowItem, DbPendingCancellation } from './database';
+
 export type ExecutionRoute = 'SELF_DELIVERY' | 'COURIER_PHONE';
 
 export type OrderStatus =
   | 'PENDING'
   | 'ACCEPTED'
+  | 'AWAITING_DRIVER'
+  | 'ASSIGNED_TO_DRIVER'
   | 'PREPARING'
   | 'READY'
+  | 'PICKED_UP'
+  | 'ON_THE_WAY'
+  | 'DELIVERED'
   | 'COMPLETED'
   | 'REJECTED'
   | 'CANCELLED';
@@ -87,6 +94,7 @@ export interface SelectedOption {
 }
 
 export interface OrderItem {
+  id?: string;
   itemId: string;
   name: string;
   priceAtOrder: number;
@@ -143,6 +151,8 @@ export interface Order {
   deliveryGovernorateSnapshot?: string;
   deliveryCenterSnapshot?: string;
   deliveryAreaSnapshot?: string;
+  workflowItems?: DbOrderWorkflowItem[];
+  pendingCancellation?: DbPendingCancellation | null;
   phoneCourierCallLog?: {
     courierName: string;
     courierPhone: string;
@@ -191,6 +201,7 @@ export interface RestaurantProfile {
   deliveryRadiusKm: number;
   maxAllowedRadiusKm: number; // Admin fixed restriction
   deliveryFee: number; // Fixed/Admin guidance
+  restaurantDeliveryEnabled: boolean;
   isOpen: boolean;
   openingHours: string;
   holidays: string;

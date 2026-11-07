@@ -33,9 +33,15 @@ export class OrderRealtimeManager {
   private fetchQueued = false;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
   private fallbackInterval: ReturnType<typeof setInterval> | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // معرف الجلسة لمنع نتائج الجلب المتأخرة بعد إيقاف الخدمة أو تغيير المطعم
+  private sessionGeneration = 0;
 
   // مجموعة لتخزين معرفات الطلبات التي تم تحميلها بالفعل لتفادي التنبيهات المكررة
   private knownOrderIds = new Set<string>();
+  // مجموعة لتسجيل الطلبات التي تم إطلاق تنبيه صوتي لها فعلياً
+  private notifiedOrderIds = new Set<string>();
   private isInitialLoadDone = false;
 
   private status: RealtimeConnectionStatus = 'DISCONNECTED';
@@ -48,13 +54,15 @@ export class OrderRealtimeManager {
 
     // إذا كان نفس المطعم يعمل بالفعل، نكتفي بالمزامنة
     if (this.restaurantId === restaurantId && this.channel) {
+      this.callbacks = callbacks;
       this.triggerSync();
       return;
     }
 
-    // إيقاف أي اشتراك سابق
+    // إيقاف أي اشتراك سابق وزيادة عداد الجلسة لإلغاء أي جلب قيد التنفيذ
     this.stop();
 
+    this.sessionGeneration++;
     this.restaurantId = restaurantId;
     this.callbacks = callbacks;
     this.knownOrderIds.clear();
@@ -79,6 +87,8 @@ export class OrderRealtimeManager {
    * إيقاف الاشتراك وتنظيف كافة المؤقتات والمستمعات
    */
   public stop() {
+    this.sessionGeneration++; // إبطال أي طلبات شبكة سارية
+
     if (this.channel) {
       try {
         supabase.removeChannel(this.channel);
@@ -93,6 +103,11 @@ export class OrderRealtimeManager {
       this.debounceTimer = null;
     }
 
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
     if (this.fallbackInterval) {
       clearInterval(this.fallbackInterval);
       this.fallbackInterval = null;
@@ -105,6 +120,7 @@ export class OrderRealtimeManager {
     this.isFetching = false;
     this.fetchQueued = false;
     this.knownOrderIds.clear();
+    this.notifiedOrderIds.clear();
     this.isInitialLoadDone = false;
     this.status = 'DISCONNECTED';
   }
@@ -129,7 +145,7 @@ export class OrderRealtimeManager {
   }
 
   /**
-   * إنشاء قناة Realtime بفلتر خاص بالمطعم
+   * إنشاء قناة Realtime بفلتر خاص بالمطعم مع إعادة محاولة ذكية
    */
   private setupRealtimeSubscription(restaurantId: string) {
     if (!isSupabaseConfigured) {
@@ -137,6 +153,16 @@ export class OrderRealtimeManager {
       return;
     }
 
+    if (this.channel) {
+      try {
+        supabase.removeChannel(this.channel);
+      } catch (err) {
+        // ignore
+      }
+      this.channel = null;
+    }
+
+    const currentGen = this.sessionGeneration;
     const channelTopic = `restaurant_orders_${restaurantId}_${Date.now()}`;
 
     try {
@@ -150,12 +176,14 @@ export class OrderRealtimeManager {
             table: 'restaurant_orders',
             filter: `restaurant_id=eq.${restaurantId}`,
           },
-          (payload) => {
+          () => {
             // استقبال حدث فوري: نطلب جلب موثوق للطلب مع أصنافه وسجل حالاته
             this.triggerSync();
           }
         )
         .subscribe((subscribeStatus, err) => {
+          if (currentGen !== this.sessionGeneration) return;
+
           if (subscribeStatus === 'SUBSCRIBED') {
             this.updateStatus('CONNECTED');
             // عند اكتمال الاشتراك بنجاح، ننفذ مزامنة للتأكد من عدم ضياع أي طلب في الفترة الفاصلة
@@ -163,24 +191,48 @@ export class OrderRealtimeManager {
           } else if (subscribeStatus === 'CLOSED' || subscribeStatus === 'CHANNEL_ERROR') {
             this.updateStatus('DISCONNECTED');
             if (err) {
-              console.warn('Realtime channel error:', err);
+              console.warn('Realtime channel error/closed:', err);
             }
+            this.scheduleReconnect(restaurantId, currentGen);
           } else if (subscribeStatus === 'TIMED_OUT') {
             this.updateStatus('CONNECTING');
+            this.scheduleReconnect(restaurantId, currentGen);
           }
         });
     } catch (e: any) {
       console.error('Failed to set up realtime subscription:', e);
       this.updateStatus('DISCONNECTED');
       this.callbacks?.onError(e?.message || 'تعذر بدء الاستماع اللحظي للطلبات.');
+      this.scheduleReconnect(restaurantId, currentGen);
     }
   }
 
   /**
-   * تنفيذ جلب الطلبات مع قفل التكرار ومقارنة المعرفات
+   * جدولة إعادة الاتصال بالقناة اللحظية عند انقطاعها
+   */
+  private scheduleReconnect(restaurantId: string, generation: number) {
+    if (generation !== this.sessionGeneration || !this.restaurantId) return;
+
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+    }
+
+    this.reconnectTimer = setTimeout(() => {
+      if (generation === this.sessionGeneration && this.restaurantId) {
+        this.updateStatus('CONNECTING');
+        this.setupRealtimeSubscription(restaurantId);
+      }
+    }, 4000);
+  }
+
+  /**
+   * تنفيذ جلب الطلبات مع قفل التكرار ومقارنة المعرفات وحماية الجلسة
    */
   private async executeFetch(isInitial = false) {
     if (!this.restaurantId) return;
+
+    const currentGen = this.sessionGeneration;
+    const targetRestaurantId = this.restaurantId;
 
     if (this.isFetching) {
       this.fetchQueued = true;
@@ -190,7 +242,12 @@ export class OrderRealtimeManager {
     this.isFetching = true;
 
     try {
-      const res = await fetchRestaurantOrders(this.restaurantId);
+      const res = await fetchRestaurantOrders(targetRestaurantId);
+
+      // التأكد من أن الجلسة لم تتغير أو تلغى أثناء انتظار استجابة الشبكة
+      if (currentGen !== this.sessionGeneration || this.restaurantId !== targetRestaurantId) {
+        return;
+      }
 
       if (res.error) {
         this.callbacks?.onError(res.error);
@@ -205,29 +262,41 @@ export class OrderRealtimeManager {
           if (!this.knownOrderIds.has(order.id)) {
             // طلب جديد لم يكن مسجلاً لدينا
             this.knownOrderIds.add(order.id);
-            // تشغيل التنبيه الصوتي
-            playNewOrderChime();
+
+            // تشغيل التنبيه الصوتي فقط إذا لم يُطلق من قبل لهذا الطلب
+            if (!this.notifiedOrderIds.has(order.id)) {
+              this.notifiedOrderIds.add(order.id);
+              playNewOrderChime();
+            }
+
             // إخطار الواجهة
             this.callbacks?.onNewOrderReceived(order);
           }
         });
       } else {
         // التحميل الأولي: نسجل جميع المعرفات الحالية دون إصدار صوت
-        freshOrders.forEach((o) => this.knownOrderIds.add(o.id));
+        freshOrders.forEach((o) => {
+          this.knownOrderIds.add(o.id);
+          this.notifiedOrderIds.add(o.id);
+        });
         this.isInitialLoadDone = true;
       }
 
       // إرسال القائمة المحدثة بالكامل
       this.callbacks?.onOrdersUpdated(freshOrders);
     } catch (err: any) {
-      this.callbacks?.onError(err?.message || 'فشلت مزامنة الطلبات.');
+      if (currentGen === this.sessionGeneration) {
+        this.callbacks?.onError(err?.message || 'فشلت مزامنة الطلبات.');
+      }
     } finally {
-      this.isFetching = false;
+      if (currentGen === this.sessionGeneration) {
+        this.isFetching = false;
 
-      // إذا ورد طلب مزامنة أثناء العملية السابقة، ننفذه فورًا
-      if (this.fetchQueued) {
-        this.fetchQueued = false;
-        setTimeout(() => this.executeFetch(false), 50);
+        // إذا ورد طلب مزامنة أثناء العملية السابقة، ننفذه فورًا
+        if (this.fetchQueued) {
+          this.fetchQueued = false;
+          setTimeout(() => this.executeFetch(false), 50);
+        }
       }
     }
   }
@@ -265,7 +334,7 @@ export class OrderRealtimeManager {
    */
   private setupFallbackTimer() {
     this.fallbackInterval = setInterval(() => {
-      // إذا كان الاتصال اللحظي غير مستقر، أو للمزامنة الدورية الهادئة
+      // مزامنة دورية هادئة لضمان سلامة الحالة
       this.triggerSync();
     }, 30000);
   }

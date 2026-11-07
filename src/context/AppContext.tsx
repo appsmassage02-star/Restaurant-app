@@ -51,6 +51,16 @@ import {
   RealtimeConnectionStatus,
 } from '../services/orderRealtimeService';
 import {
+  acceptOrderWithRoute,
+  rejectOrder as rejectOrderRpc,
+  setOrderPreparing as setOrderPreparingRpc,
+  markOrderReady as markOrderReadyRpc,
+  setRestaurantDeliveryEnabled as setRestaurantDeliveryEnabledRpc,
+  listPendingCancellations,
+  decideCancellation as decideCancellationRpc,
+} from '../services/orderWorkflowService';
+import { DbPendingCancellation } from '../types/database';
+import {
   INITIAL_CATEGORIES,
   INITIAL_MENU_ITEMS,
   INITIAL_OFFERS,
@@ -73,6 +83,7 @@ const EMPTY_RESTAURANT: RestaurantProfile = {
   deliveryRadiusKm: 5.0,
   maxAllowedRadiusKm: 12.0,
   deliveryFee: 25.0,
+  restaurantDeliveryEnabled: true,
   isOpen: false,
   openingHours: '10:00 ص - 12:00 م',
   holidays: '',
@@ -186,6 +197,16 @@ interface AppContextType {
   completeOrder: (orderId: string) => void;
   injectMockOrder: (route?: ExecutionRoute) => void;
 
+  // Phase 2 Workflow Operations
+  updateRestaurantDeliveryEnabled: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;
+  acceptOrderWorkflow: (orderId: string, fulfillmentRoute: 'restaurant_delivery' | 'driver_delivery') => Promise<{ success: boolean; error?: string }>;
+  rejectOrderWorkflow: (orderId: string, reason: string) => Promise<{ success: boolean; error?: string }>;
+  setOrderPreparingWorkflow: (orderId: string) => Promise<{ success: boolean; error?: string }>;
+  markOrderReadyWorkflow: (orderId: string) => Promise<{ success: boolean; error?: string }>;
+  decideCancellationWorkflow: (requestId: string, approve: boolean, reason?: string) => Promise<{ success: boolean; error?: string }>;
+  pendingCancellations: DbPendingCancellation[];
+  refreshPendingCancellations: () => Promise<void>;
+
   // Financials & Movements
   movements: FinancialMovement[];
   recordSettlement: (amount: number, receiptNum: string, notes: string) => void;
@@ -248,6 +269,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [ordersLoading, setOrdersLoading] = useState<boolean>(false);
   const [ordersError, setOrdersError] = useState<string | null>(null);
   const [ordersRealtimeStatus, setOrdersRealtimeStatus] = useState<RealtimeConnectionStatus>('DISCONNECTED');
+  const [pendingCancellations, setPendingCancellations] = useState<DbPendingCancellation[]>([]);
   const [movements, setMovements] = useState<FinancialMovement[]>([]);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [newOrderAlert, setNewOrderAlert] = useState<Order | null>(null);
@@ -359,16 +381,30 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       },
     });
 
+    refreshPendingCancellations();
+
     return () => {
       orderRealtimeManager.stop();
     };
   }, [dbRestaurant?.id]);
 
+  const refreshPendingCancellations = useCallback(async () => {
+    if (!dbRestaurant?.id) {
+      setPendingCancellations([]);
+      return;
+    }
+    const res = await listPendingCancellations();
+    if (res.data) {
+      setPendingCancellations(res.data);
+    }
+  }, [dbRestaurant?.id]);
+
   const refreshOrders = useCallback(() => {
     if (dbRestaurant?.id) {
       orderRealtimeManager.triggerSync();
+      refreshPendingCancellations();
     }
-  }, [dbRestaurant?.id]);
+  }, [dbRestaurant?.id, refreshPendingCancellations]);
 
   // Translate Supabase Auth Error to Egyptian Arabic
   const translateAuthError = (message: string): string => {
@@ -418,6 +454,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         deliveryRadiusKm: db.max_delivery_radius_km ?? 6.0,
         maxAllowedRadiusKm: 15.0,
         deliveryFee: db.delivery_fee ?? 25.0,
+        restaurantDeliveryEnabled: db.restaurant_delivery_enabled !== false,
         isOpen: db.is_open ?? false,
         openingHours: '10:00 ص - 01:00 ص',
         holidays: 'يعمل طوال الأسبوع',
@@ -1011,36 +1048,104 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     deleteOfferAsync(id);
   };
 
-  // Orders — منع التغيير المحلي الوهمي لحالة الطلب (المرحلة الأولى)
-  // لا توجد سياسة UPDATE لمالك المطعم في RLS حالياً، وتحديث دورة الحالات مجدول للمرحلة الثانية
-  const acceptOrder = (_orderId: string) => {
-    console.warn(
-      'تحديث حالة الطلب معطل مؤقتاً في المرحلة الأولى؛ سيتم تفعيل دورة تحديث الحالات الرسمية في المرحلة الثانية فور اعتماد الصلاحيات.'
-    );
+  // Operations - Phase 2 Order Lifecycle & Delivery Toggle
+  const updateRestaurantDeliveryEnabled = async (
+    enabled: boolean
+  ): Promise<{ success: boolean; error?: string }> => {
+    const res = await setRestaurantDeliveryEnabledRpc(enabled);
+    if (!res.success) {
+      return { success: false, error: res.error };
+    }
+    setRestaurant((prev) => ({
+      ...prev,
+      restaurantDeliveryEnabled: enabled,
+    }));
+    if (dbRestaurant) {
+      setDbRestaurant((prev) =>
+        prev ? { ...prev, restaurant_delivery_enabled: enabled } : null
+      );
+    }
+    return { success: true };
   };
 
-  const rejectOrder = (_orderId: string, _reason: string) => {
-    console.warn(
-      'رفض الطلب معطل مؤقتاً في المرحلة الأولى؛ سيتم تفعيل دورة تحديث الحالات الرسمية في المرحلة الثانية.'
-    );
+  const acceptOrderWorkflow = async (
+    orderId: string,
+    fulfillmentRoute: 'restaurant_delivery' | 'driver_delivery'
+  ): Promise<{ success: boolean; error?: string }> => {
+    const res = await acceptOrderWithRoute(orderId, fulfillmentRoute);
+    if (!res.success) {
+      return { success: false, error: res.error };
+    }
+    orderRealtimeManager.triggerSync();
+    return { success: true };
   };
 
-  const startPreparingOrder = (_orderId: string) => {
-    console.warn(
-      'بدء تجهيز الطلب معطل مؤقتاً في المرحلة الأولى؛ سيتم تفعيل دورة تحديث الحالات الرسمية في المرحلة الثانية.'
-    );
+  const rejectOrderWorkflow = async (
+    orderId: string,
+    reason: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    const res = await rejectOrderRpc(orderId, reason);
+    if (!res.success) {
+      return { success: false, error: res.error };
+    }
+    orderRealtimeManager.triggerSync();
+    return { success: true };
   };
 
-  const markOrderReady = (_orderId: string) => {
-    console.warn(
-      'تحديد الطلب كجاهز معطل مؤقتاً في المرحلة الأولى؛ سيتم تفعيل دورة تحديث الحالات الرسمية في المرحلة الثانية.'
-    );
+  const setOrderPreparingWorkflow = async (
+    orderId: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    const res = await setOrderPreparingRpc(orderId);
+    if (!res.success) {
+      return { success: false, error: res.error };
+    }
+    orderRealtimeManager.triggerSync();
+    return { success: true };
+  };
+
+  const markOrderReadyWorkflow = async (
+    orderId: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    const res = await markOrderReadyRpc(orderId);
+    if (!res.success) {
+      return { success: false, error: res.error };
+    }
+    orderRealtimeManager.triggerSync();
+    return { success: true };
+  };
+
+  const decideCancellationWorkflow = async (
+    requestId: string,
+    approve: boolean,
+    reason?: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    const res = await decideCancellationRpc(requestId, approve, reason);
+    if (!res.success) {
+      return { success: false, error: res.error };
+    }
+    await refreshPendingCancellations();
+    orderRealtimeManager.triggerSync();
+    return { success: true };
+  };
+
+  const acceptOrder = (orderId: string) => {
+    acceptOrderWorkflow(orderId, 'restaurant_delivery');
+  };
+
+  const rejectOrder = (orderId: string, reason: string) => {
+    rejectOrderWorkflow(orderId, reason);
+  };
+
+  const startPreparingOrder = (orderId: string) => {
+    setOrderPreparingWorkflow(orderId);
+  };
+
+  const markOrderReady = (orderId: string) => {
+    markOrderReadyWorkflow(orderId);
   };
 
   const completeOrder = (_orderId: string) => {
-    console.warn(
-      'إكمال الطلب معطل مؤقتاً في المرحلة الأولى؛ سيتم تفعيل دورة تحديث الحالات الرسمية في المرحلة الثانية.'
-    );
+    console.warn('اكتمال الطلب يتم تلقائياً بواسطة المنظومة أو السائق عند التسليم الفعلي.');
   };
 
   const injectMockOrder = (route: ExecutionRoute = 'SELF_DELIVERY') => {
@@ -1247,6 +1352,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         markOrderReady,
         completeOrder,
         injectMockOrder,
+        updateRestaurantDeliveryEnabled,
+        acceptOrderWorkflow,
+        rejectOrderWorkflow,
+        setOrderPreparingWorkflow,
+        markOrderReadyWorkflow,
+        decideCancellationWorkflow,
+        pendingCancellations,
+        refreshPendingCancellations,
         movements,
         recordSettlement,
         notifications,

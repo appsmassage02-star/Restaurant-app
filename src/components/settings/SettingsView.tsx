@@ -21,6 +21,7 @@ import {
   DollarSign,
   Info,
   RefreshCw,
+  Truck,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import {
@@ -41,7 +42,13 @@ import {
 import { FoodGovernorate, FoodCenter, FoodArea } from '../../types/database';
 
 export const SettingsView: React.FC = () => {
-  const { restaurant, updateRestaurantSettingsDb, dbRestaurant, refreshRestaurant } = useApp();
+  const {
+    restaurant,
+    updateRestaurantSettingsDb,
+    updateRestaurantDeliveryEnabled,
+    dbRestaurant,
+    refreshRestaurant,
+  } = useApp();
 
   // Basic Info
   const [name, setName] = useState(restaurant.name);
@@ -54,6 +61,7 @@ export const SettingsView: React.FC = () => {
   const [deliveryFee, setDeliveryFee] = useState<number | ''>(restaurant.deliveryFee || 25);
   const [deliveryRadiusKm, setDeliveryRadiusKm] = useState(restaurant.deliveryRadiusKm || 5);
   const [isOpen, setIsOpen] = useState(restaurant.isOpen);
+  const [isTogglingDelivery, setIsTogglingDelivery] = useState(false);
 
   // Geographic cascaded selection for adding a new service area
   const [governorates, setGovernorates] = useState<FoodGovernorate[]>([]);
@@ -191,6 +199,28 @@ export const SettingsView: React.FC = () => {
       setTimeout(() => setSaveSuccess(null), 4000);
     }
     setIsTogglingOpen(false);
+  };
+
+  // Toggle Restaurant Delivery Availability (restaurant_delivery_enabled)
+  const handleToggleDeliveryEnabled = async () => {
+    setErrorMessage(null);
+    setSaveSuccess(null);
+    setIsTogglingDelivery(true);
+    const nextState = !restaurant.restaurantDeliveryEnabled;
+
+    const res = await updateRestaurantDeliveryEnabled(nextState);
+
+    if (!res.success) {
+      setErrorMessage(res.error || 'فشل تحديث إعداد دليفري المطعم في قاعدة البيانات.');
+    } else {
+      setSaveSuccess(
+        nextState
+          ? 'تم تفعيل خيار «دليفري المطعم متاح» بنجاح في قاعدة البيانات. يمكنك الآن اختيار التوصيل الذاتي عند قبول الطلبات.'
+          : 'تم تعطيل «دليفري المطعم». سيقتصر قبول الطلبات على مسار دليفري طلباتي (كباتن المنظومة).'
+      );
+      setTimeout(() => setSaveSuccess(null), 4500);
+    }
+    setIsTogglingDelivery(false);
   };
 
   // Save Basic Info to Supabase
@@ -395,6 +425,52 @@ export const SettingsView: React.FC = () => {
             'إغلاق المطعم مؤقتًا'
           ) : (
             'فتح المطعم لاستقبال الزبائن'
+          )}
+        </button>
+      </div>
+
+      {/* 1.5 Restaurant Self Delivery Toggle Card */}
+      <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <Truck className="w-4 h-4 text-amber-600" />
+            <span
+              className={`w-3 h-3 rounded-full ${
+                restaurant.restaurantDeliveryEnabled ? 'bg-emerald-500' : 'bg-slate-400'
+              }`}
+            />
+            <h3 className="text-sm font-bold text-slate-900">
+              دليفري المطعم: {restaurant.restaurantDeliveryEnabled ? 'متاح ونشط' : 'معطل'}
+            </h3>
+          </div>
+          <p className="text-slate-500 text-xs leading-relaxed max-w-xl">
+            يتحكم في إمكانية اختيار مسار «توصيل المطعم» عند قبول الطلبات الواردة عبر RPC المعتمد{' '}
+            <code className="text-[11px] font-mono text-amber-800 bg-amber-50 px-1 py-0.5 rounded">
+              restaurant_set_delivery_enabled
+            </code>
+            . إذا كان معطلاً، لن يُسمح للمطعم باختيار مسار التوصيل الذاتي وسيقتصر القبول على دليفري طلباتي.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          disabled={isTogglingDelivery}
+          onClick={handleToggleDeliveryEnabled}
+          className={`px-5 py-2.5 rounded-xl font-bold text-xs transition-all shadow-xs shrink-0 cursor-pointer disabled:opacity-60 flex items-center gap-1.5 ${
+            restaurant.restaurantDeliveryEnabled
+              ? 'bg-amber-100 text-amber-900 hover:bg-amber-200 border border-amber-300'
+              : 'bg-slate-900 text-white hover:bg-slate-800'
+          }`}
+        >
+          {isTogglingDelivery ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>جارٍ التحديث...</span>
+            </>
+          ) : restaurant.restaurantDeliveryEnabled ? (
+            'تعطيل دليفري المطعم'
+          ) : (
+            'تفعيل دليفري المطعم'
           )}
         </button>
       </div>

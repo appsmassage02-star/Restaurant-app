@@ -17,6 +17,7 @@ import {
   WifiOff,
   Loader2,
   AlertCircle,
+  ShieldAlert,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Order, OrderStatus, ExecutionRoute } from '../../types';
@@ -39,6 +40,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
     refreshOrders,
     hasRestaurant,
     restaurant,
+    pendingCancellations,
   } = useApp();
 
   const [statusFilter, setStatusFilter] = useState<string>(initialFilter);
@@ -47,8 +49,16 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
 
   const filteredOrders = orders.filter((ord) => {
     // Status filter
-    if (statusFilter !== 'ALL' && ord.status !== statusFilter) {
-      return false;
+    if (statusFilter !== 'ALL') {
+      if (statusFilter === 'ON_THE_WAY') {
+        if (ord.status !== 'PICKED_UP' && ord.status !== 'ON_THE_WAY') return false;
+      } else if (statusFilter === 'COMPLETED') {
+        if (ord.status !== 'COMPLETED' && ord.status !== 'DELIVERED') return false;
+      } else if (statusFilter === 'REJECTED') {
+        if (ord.status !== 'REJECTED' && ord.status !== 'CANCELLED') return false;
+      } else if (ord.status !== statusFilter) {
+        return false;
+      }
     }
     // Route filter
     if (routeFilter !== 'ALL' && ord.route !== routeFilter) {
@@ -82,6 +92,20 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
             {label}
           </span>
         );
+      case 'AWAITING_DRIVER':
+        return (
+          <span className="px-2.5 py-1 text-xs font-bold rounded-lg bg-sky-100 text-sky-800 border border-sky-200 flex items-center gap-1">
+            <Clock className="w-3.5 h-3.5 text-sky-600" />
+            {label}
+          </span>
+        );
+      case 'ASSIGNED_TO_DRIVER':
+        return (
+          <span className="px-2.5 py-1 text-xs font-bold rounded-lg bg-indigo-100 text-indigo-800 border border-indigo-200 flex items-center gap-1">
+            <Truck className="w-3.5 h-3.5 text-indigo-600" />
+            {label}
+          </span>
+        );
       case 'PREPARING':
         return (
           <span className="px-2.5 py-1 text-xs font-bold rounded-lg bg-orange-100 text-orange-800 border border-orange-200 flex items-center gap-1">
@@ -96,7 +120,16 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
             {label}
           </span>
         );
+      case 'PICKED_UP':
+      case 'ON_THE_WAY':
+        return (
+          <span className="px-2.5 py-1 text-xs font-bold rounded-lg bg-teal-100 text-teal-800 border border-teal-200 flex items-center gap-1">
+            <Truck className="w-3.5 h-3.5 text-teal-600" />
+            {label}
+          </span>
+        );
       case 'COMPLETED':
+      case 'DELIVERED':
         return (
           <span className="px-2.5 py-1 text-xs font-bold rounded-lg bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center gap-1">
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
@@ -118,9 +151,12 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
     ALL: orders.length,
     PENDING: orders.filter((o) => o.status === 'PENDING').length,
     ACCEPTED: orders.filter((o) => o.status === 'ACCEPTED').length,
+    AWAITING_DRIVER: orders.filter((o) => o.status === 'AWAITING_DRIVER').length,
+    ASSIGNED_TO_DRIVER: orders.filter((o) => o.status === 'ASSIGNED_TO_DRIVER').length,
     PREPARING: orders.filter((o) => o.status === 'PREPARING').length,
     READY: orders.filter((o) => o.status === 'READY').length,
-    COMPLETED: orders.filter((o) => o.status === 'COMPLETED').length,
+    ON_THE_WAY: orders.filter((o) => o.status === 'PICKED_UP' || o.status === 'ON_THE_WAY').length,
+    COMPLETED: orders.filter((o) => o.status === 'COMPLETED' || o.status === 'DELIVERED').length,
     REJECTED: orders.filter((o) => o.status === 'REJECTED' || o.status === 'CANCELLED').length,
   };
 
@@ -201,6 +237,34 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
         </div>
       )}
 
+      {/* Pending Cancellations Global Alert Banner */}
+      {pendingCancellations && pendingCancellations.length > 0 && (
+        <div className="p-4 rounded-2xl bg-rose-50 border-2 border-rose-300 text-rose-950 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs shadow-xs">
+          <div className="flex items-center gap-2.5">
+            <ShieldAlert className="w-5 h-5 text-rose-600 shrink-0 animate-bounce" />
+            <div>
+              <p className="font-black text-sm">
+                تنبيه: يوجد {pendingCancellations.length} طلب إلغاء معلق من الزبائن بانتظار قرارك!
+              </p>
+              <p className="text-rose-800 text-xs mt-0.5">
+                يرجى فتح تفاصيل الطلب للبت في طلب الإلغاء بالموافقة أو الرفض مع ذكر السبب.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              const targetOrder = orders.find((o) => o.id === pendingCancellations[0].order_id);
+              if (targetOrder) {
+                onOpenOrderDetails(targetOrder);
+              }
+            }}
+            className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-black rounded-xl text-xs transition-colors shrink-0 shadow-xs cursor-pointer"
+          >
+            فتح أول طلب معلق (#{pendingCancellations[0].order_number || ''})
+          </button>
+        </div>
+      )}
+
       {/* Filter and Search Bar */}
       <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-3">
         <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
@@ -260,8 +324,11 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
             { key: 'ALL', label: 'الكل', count: statusCounts.ALL },
             { key: 'PENDING', label: 'منتظرة', count: statusCounts.PENDING, urgent: statusCounts.PENDING > 0 },
             { key: 'ACCEPTED', label: 'مقبولة', count: statusCounts.ACCEPTED },
+            { key: 'AWAITING_DRIVER', label: 'بانتظار طيار', count: statusCounts.AWAITING_DRIVER },
+            { key: 'ASSIGNED_TO_DRIVER', label: 'تم إسناد طيار', count: statusCounts.ASSIGNED_TO_DRIVER },
             { key: 'PREPARING', label: 'قيد التجهيز', count: statusCounts.PREPARING },
             { key: 'READY', label: 'جاهزة', count: statusCounts.READY, urgent: statusCounts.READY > 0 },
+            { key: 'ON_THE_WAY', label: 'في الطريق', count: statusCounts.ON_THE_WAY },
             { key: 'COMPLETED', label: 'مكتملة', count: statusCounts.COMPLETED },
             { key: 'REJECTED', label: 'مرفوضة وملغاة', count: statusCounts.REJECTED },
           ].map((tab) => {

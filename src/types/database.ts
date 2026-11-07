@@ -86,6 +86,7 @@ export interface DbRestaurant {
   commission_percent?: number | null;
   food_money_settlement_mode?: string | null;
   max_delivery_radius_km?: number | null;
+  restaurant_delivery_enabled?: boolean | null;
   created_at?: string;
   updated_at?: string;
 
@@ -173,4 +174,29 @@ export interface DbRestaurantOrderStatusHistory {
   note?: string | null;
   created_at: string;
 }
+
+export interface DbOrderWorkflowItem {
+  order_item_id: string;
+  item_name?: string;
+  item_name_snapshot?: string;
+  requested_quantity: number;
+  available_quantity: number | null;
+  customer_approved_quantity: number | null;
+  customer_decision: 'remove_missing' | 'accept_substitute' | 'pending' | string | null;
+  substitute_item_name?: string | null;
+  substitute_price?: number | null;
+  is_customer_approved: boolean | null;
+  status?: string | null;
+}
+
+export interface DbPendingCancellation {
+  id: string;
+  order_id: string;
+  order_number?: string | number;
+  customer_name?: string;
+  reason: string;
+  created_at: string;
+  status?: string;
+}
+
 

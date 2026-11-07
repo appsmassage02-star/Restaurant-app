@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   X,
   Phone,
@@ -15,10 +15,22 @@ import {
   History,
   Info,
   ShieldAlert,
+  Loader2,
+  Check,
+  XCircle,
+  AlertCircle,
+  HelpCircle,
+  Flame,
+  PackageCheck,
 } from 'lucide-react';
 import { Order } from '../../types';
 import { useApp } from '../../context/AppContext';
 import { getArabicStatusLabel, getArabicRouteLabel } from '../../services/orderService';
+import {
+  getOrderWorkflow,
+  recordItemFulfillment,
+} from '../../services/orderWorkflowService';
+import { DbOrderWorkflowItem } from '../../types/database';
 
 interface OrderDetailsModalProps {
   order: Order | null;
@@ -31,7 +43,249 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
   onClose,
   onOpenInvoice,
 }) => {
+  const {
+    restaurant,
+    refreshOrders,
+    acceptOrderWorkflow,
+    rejectOrderWorkflow,
+    setOrderPreparingWorkflow,
+    markOrderReadyWorkflow,
+    decideCancellationWorkflow,
+    pendingCancellations,
+  } = useApp();
+
+  // Workflow items state
+  const [workflowItems, setWorkflowItems] = useState<DbOrderWorkflowItem[]>([]);
+  const [loadingWorkflow, setLoadingWorkflow] = useState(false);
+
+  // Fulfillment route selection modal for accepting order
+  const [showAcceptDialog, setShowAcceptDialog] = useState(false);
+  const [selectedRoute, setSelectedRoute] = useState<'restaurant_delivery' | 'driver_delivery'>(
+    restaurant.restaurantDeliveryEnabled ? 'restaurant_delivery' : 'driver_delivery'
+  );
+
+  // Reject order dialog
+  const [showRejectDialog, setShowRejectDialog] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+
+  // Cancel decision state
+  const [showCancelRejectDialog, setShowCancelRejectDialog] = useState(false);
+  const [cancelRejectReason, setCancelRejectReason] = useState('');
+
+  // Item availability editing state
+  const [editingItemQtyId, setEditingItemQtyId] = useState<string | null>(null);
+  const [editingQtyValue, setEditingQtyValue] = useState<number>(0);
+
+  // Action status / feedback
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+
+  // Find if this order has a pending cancellation request
+  const pendingCancel = pendingCancellations.find(
+    (c) => c.order_id === order?.id && c.status === 'pending'
+  );
+
+  // Load workflow items whenever order changes
+  const loadWorkflow = useCallback(async (orderId: string) => {
+    setLoadingWorkflow(true);
+    const res = await getOrderWorkflow(orderId);
+    if (res.data) {
+      setWorkflowItems(res.data);
+    }
+    setLoadingWorkflow(false);
+  }, []);
+
+  useEffect(() => {
+    if (order?.id) {
+      loadWorkflow(order.id);
+      setSelectedRoute(
+        restaurant.restaurantDeliveryEnabled ? 'restaurant_delivery' : 'driver_delivery'
+      );
+      setActionError(null);
+      setActionSuccess(null);
+      setShowAcceptDialog(false);
+      setShowRejectDialog(false);
+      setShowCancelRejectDialog(false);
+    }
+  }, [order?.id, restaurant.restaurantDeliveryEnabled, loadWorkflow]);
+
   if (!order) return null;
+
+  // Determine current order status category
+  const rawStatus = (order.rawStatus || order.status).toLowerCase();
+  const isPending =
+    rawStatus === 'pending' ||
+    rawStatus === 'placed' ||
+    rawStatus === 'submitted' ||
+    order.status === 'PENDING';
+
+  const isAccepted =
+    rawStatus === 'accepted' ||
+    rawStatus === 'awaiting_driver' ||
+    rawStatus === 'assigned_to_driver' ||
+    order.status === 'ACCEPTED' ||
+    order.status === 'AWAITING_DRIVER' ||
+    order.status === 'ASSIGNED_TO_DRIVER';
+
+  const isPreparing =
+    rawStatus === 'preparing' || order.status === 'PREPARING';
+
+  const isReady =
+    rawStatus === 'ready' || order.status === 'READY';
+
+  // Rule 1: Check unresolved missing items
+  const hasUnresolvedMissingItems = workflowItems.some(
+    (item) =>
+      item.available_quantity !== null &&
+      item.available_quantity < item.requested_quantity &&
+      item.is_customer_approved !== true &&
+      item.customer_decision !== 'remove_item' &&
+      item.customer_decision !== 'approved_replacement'
+  );
+
+  // Rule 2: For driver_delivery (COURIER_PHONE), preparation is blocked until driver is assigned
+  const isDriverDelivery =
+    order.route === 'COURIER_PHONE' ||
+    order.rawRoute === 'driver_delivery' ||
+    order.rawRoute === 'courier_phone';
+
+  const isDriverAssigned =
+    rawStatus === 'assigned_to_driver' ||
+    rawStatus === 'driver_assigned' ||
+    order.status === 'ASSIGNED_TO_DRIVER';
+
+  const canStartPreparing =
+    (isAccepted || isPending) &&
+    !hasUnresolvedMissingItems &&
+    (!isDriverDelivery || isDriverAssigned);
+
+  // Handlers
+  const handleAcceptOrder = async () => {
+    setActionError(null);
+    setActionSuccess(null);
+    setIsSubmitting(true);
+
+    const res = await acceptOrderWorkflow(order.id, selectedRoute);
+    if (!res.success) {
+      setActionError(res.error || 'فشل قبول الطلب في قاعدة البيانات.');
+    } else {
+      setActionSuccess('تم قبول الطلب وتحديد مسار التوصيل بنجاح في قاعدة البيانات.');
+      setShowAcceptDialog(false);
+      refreshOrders();
+      loadWorkflow(order.id);
+      setTimeout(() => setActionSuccess(null), 3500);
+    }
+    setIsSubmitting(false);
+  };
+
+  const handleRejectOrder = async () => {
+    if (!rejectReason.trim()) {
+      setActionError('يرجى كتابة سبب واضح لرفض الطلب.');
+      return;
+    }
+    setActionError(null);
+    setActionSuccess(null);
+    setIsSubmitting(true);
+
+    const res = await rejectOrderWorkflow(order.id, rejectReason.trim());
+    if (!res.success) {
+      setActionError(res.error || 'فشل تسجيل رفض الطلب.');
+    } else {
+      setActionSuccess('تم تسجيل رفض الطلب بنجاح في قاعدة البيانات.');
+      setShowRejectDialog(false);
+      refreshOrders();
+      setTimeout(() => {
+        setActionSuccess(null);
+        onClose();
+      }, 1500);
+    }
+    setIsSubmitting(false);
+  };
+
+  const handleStartPreparing = async () => {
+    setActionError(null);
+    setActionSuccess(null);
+    setIsSubmitting(true);
+
+    const res = await setOrderPreparingWorkflow(order.id);
+    if (!res.success) {
+      setActionError(res.error || 'فشل نقل الطلب إلى التجهيز.');
+    } else {
+      setActionSuccess('تم بدء تجهيز الطلب في المطبخ بنجاح.');
+      refreshOrders();
+      loadWorkflow(order.id);
+      setTimeout(() => setActionSuccess(null), 3500);
+    }
+    setIsSubmitting(false);
+  };
+
+  const handleMarkReady = async () => {
+    setActionError(null);
+    setActionSuccess(null);
+    setIsSubmitting(true);
+
+    const res = await markOrderReadyWorkflow(order.id);
+    if (!res.success) {
+      setActionError(res.error || 'فشل تحديد الطلب كجاهز.');
+    } else {
+      setActionSuccess('تم تحديد الطلب كجاهز للتسليم بنجاح.');
+      refreshOrders();
+      loadWorkflow(order.id);
+      setTimeout(() => setActionSuccess(null), 3500);
+    }
+    setIsSubmitting(false);
+  };
+
+  const handleSaveItemFulfillment = async (orderItemId: string) => {
+    setActionError(null);
+    setActionSuccess(null);
+    setIsSubmitting(true);
+
+    const res = await recordItemFulfillment(orderItemId, editingQtyValue);
+    if (!res.success) {
+      setActionError(res.error || 'فشل تسجيل توفر الصنف.');
+    } else {
+      setActionSuccess('تم تسجيل توفر الصنف بنجاح.');
+      setEditingItemQtyId(null);
+      await loadWorkflow(order.id);
+      refreshOrders();
+      setTimeout(() => setActionSuccess(null), 3000);
+    }
+    setIsSubmitting(false);
+  };
+
+  const handleDecideCancellation = async (approve: boolean) => {
+    if (!pendingCancel) return;
+    if (!approve && !cancelRejectReason.trim()) {
+      setActionError('يرجى ذكر سبب رفض طلب الإلغاء.');
+      return;
+    }
+
+    setActionError(null);
+    setActionSuccess(null);
+    setIsSubmitting(true);
+
+    const res = await decideCancellationWorkflow(
+      pendingCancel.id,
+      approve,
+      approve ? undefined : cancelRejectReason.trim()
+    );
+
+    if (!res.success) {
+      setActionError(res.error || 'فشل البت في طلب الإلغاء.');
+    } else {
+      setActionSuccess(
+        approve
+          ? 'تمت الموافقة على إلغاء الطلب بناءً على رغبة العميل.'
+          : 'تم رفض طلب الإلغاء مع إشعار العميل بالسبب.'
+      );
+      setShowCancelRejectDialog(false);
+      refreshOrders();
+      setTimeout(() => setActionSuccess(null), 3500);
+    }
+    setIsSubmitting(false);
+  };
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 font-['Cairo',sans-serif]">
@@ -81,8 +335,97 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
         </div>
 
         {/* Scrollable Content */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5 text-xs">
-          {/* Execution Route Banner & Explanation */}
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 text-xs">
+          {/* Feedback messages */}
+          {actionSuccess && (
+            <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between text-emerald-900 font-bold text-xs">
+              <div className="flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 text-emerald-600" />
+                <span>{actionSuccess}</span>
+              </div>
+              <button onClick={() => setActionSuccess(null)} className="text-emerald-600 text-xs">
+                إغلاق
+              </button>
+            </div>
+          )}
+
+          {actionError && (
+            <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-2xl flex items-center justify-between text-rose-900 font-bold text-xs">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span>{actionError}</span>
+              </div>
+              <button onClick={() => setActionError(null)} className="text-rose-600 text-xs">
+                إغلاق
+              </button>
+            </div>
+          )}
+
+          {/* Pending Cancellation Alert Banner */}
+          {pendingCancel && (
+            <div className="p-4 bg-rose-50 border-2 border-rose-300 rounded-2xl space-y-3 shadow-xs">
+              <div className="flex items-center gap-2 text-rose-900 font-black text-sm">
+                <ShieldAlert className="w-5 h-5 text-rose-600 animate-bounce" />
+                <span>تنبيه هام: العميل أرسل طلباً لإلغاء هذا الأوردر!</span>
+              </div>
+              <p className="text-xs text-rose-800 bg-white/70 p-2.5 rounded-xl border border-rose-200">
+                <span className="font-bold">سبب الإلغاء المذكور من العميل: </span>
+                <span>{pendingCancel.reason}</span>
+              </p>
+
+              {showCancelRejectDialog ? (
+                <div className="space-y-2 pt-1 bg-white p-3 rounded-xl border border-rose-200">
+                  <label className="block font-bold text-slate-800 text-xs">
+                    سبب رفض إلغاء الطلب (سيظهر للعميل) *
+                  </label>
+                  <input
+                    type="text"
+                    value={cancelRejectReason}
+                    onChange={(e) => setCancelRejectReason(e.target.value)}
+                    placeholder="مثال: تم إعداد وتجهيز الوجبة بالكامل ولا يمكن التراجع..."
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-rose-500 font-medium"
+                  />
+                  <div className="flex items-center gap-2 justify-end pt-1">
+                    <button
+                      onClick={() => setShowCancelRejectDialog(false)}
+                      disabled={isSubmitting}
+                      className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-bold text-xs"
+                    >
+                      تراجع
+                    </button>
+                    <button
+                      onClick={() => handleDecideCancellation(false)}
+                      disabled={isSubmitting || !cancelRejectReason.trim()}
+                      className="px-4 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-bold text-xs flex items-center gap-1.5"
+                    >
+                      {isSubmitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                      <span>تأكيد رفض الإلغاء</span>
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 justify-end pt-1">
+                  <button
+                    onClick={() => setShowCancelRejectDialog(true)}
+                    disabled={isSubmitting}
+                    className="px-4 py-2 bg-white hover:bg-slate-100 text-rose-700 font-bold border border-rose-300 rounded-xl text-xs transition-colors cursor-pointer"
+                  >
+                    رفض طلب الإلغاء
+                  </button>
+                  <button
+                    onClick={() => handleDecideCancellation(true)}
+                    disabled={isSubmitting}
+                    className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-black rounded-xl text-xs transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer"
+                  >
+                    {isSubmitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                    <span>الموافقة على الإلغاء</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Fulfillment Route Banner */}
           <div
             className={`p-4 rounded-2xl border ${
               order.route === 'SELF_DELIVERY'
@@ -95,24 +438,24 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
                 {order.route === 'SELF_DELIVERY' ? (
                   <>
                     <Truck className="w-4 h-4 text-emerald-600" />
-                    <span>المسار الأول: توصيل ذاتي للمطعم (إلكتروني)</span>
+                    <span>المسار: توصيل ذاتي للمطعم (دليفري المطعم)</span>
                   </>
                 ) : (
                   <>
                     <PhoneCall className="w-4 h-4 text-blue-600" />
-                    <span>المسار الثاني: اتصال هاتفي وتوصيل المندوب</span>
+                    <span>المسار: دليفري طلباتي (كابتن المنظومة)</span>
                   </>
                 )}
               </div>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white/80 shadow-2xs">
-                مسار ثابت عند الإنشاء
+                {order.route === 'SELF_DELIVERY' ? 'رسوم التوصيل للمطعم' : 'رسوم التوصيل للمندوب'}
               </span>
             </div>
 
             <p className="text-[11px] leading-relaxed text-slate-700">
               {order.route === 'SELF_DELIVERY'
-                ? 'يستقبل المطعم الطلب إلكترونيًا، يجهزه، ويقوم طيار المطعم بتوصيله للعميل. رسوم التوصيل المقررة تذهب للمطعم، وعمولة الإدارة تُخصم فقط من صافي قيمة الطعام بعد الخصم.'
-                : 'يتم توجيه هذا الطلب إلى منظومة المندوب المستقل للتأكيد والتوصيل، وتعود رسوم التوصيل للمندوب.'}
+                ? 'يستقبل المطعم الطلب، يجهزه، ويقوم طيار المطعم بتوصيله للعميل. رسوم التوصيل المقررة تذهب للمطعم، وعمولة الإدارة تُخصم فقط من صافي قيمة الطعام بعد الخصم.'
+                : 'يتم توجيه هذا الطلب إلى شبكة كباتن طلباتي. لا يمكن بدء التجهيز في هذا المسار إلا بعد إسناد طيار للطلب.'}
             </p>
           </div>
 
@@ -156,20 +499,45 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
             </div>
           </div>
 
-          {/* Ordered Items List */}
+          {/* Ordered Items List & Missing Items Management */}
           <div className="space-y-2">
-            <h3 className="font-bold text-slate-800 flex items-center gap-1.5 text-xs">
-              <Utensils className="w-4 h-4 text-amber-600" />
-              أصناف وفاتورة الطلب ({order.items.length})
-            </h3>
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-slate-800 flex items-center gap-1.5 text-xs">
+                <Utensils className="w-4 h-4 text-amber-600" />
+                أصناف الطلب وتأكيد التوفر والنواقص ({order.items.length})
+              </h3>
+              {loadingWorkflow && (
+                <span className="text-[11px] text-amber-600 flex items-center gap-1">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  تحديث حالة النواقص...
+                </span>
+              )}
+            </div>
+
             <div className="border border-slate-200 rounded-2xl overflow-hidden divide-y divide-slate-100">
               {order.items.length === 0 ? (
                 <div className="p-4 text-center text-slate-400">لا توجد تفاصيل أصناف مسجلة لهذا الطلب.</div>
               ) : (
                 order.items.map((item, idx) => {
-                  const rowTotal = (item.priceAtOrder * item.quantity) - (item.itemDiscount || 0);
+                  const rowTotal = item.priceAtOrder * item.quantity - (item.itemDiscount || 0);
+
+                  // Find matching workflow item if available
+                  const itemId = item.id || item.itemId;
+                  const wf = workflowItems.find(
+                    (w) =>
+                      w.order_item_id === itemId ||
+                      w.item_name === item.name ||
+                      w.item_name_snapshot === item.name
+                  );
+
+                  const isEditingQty = editingItemQtyId === (wf?.order_item_id || itemId);
+                  const isShortage =
+                    wf &&
+                    wf.available_quantity !== null &&
+                    wf.available_quantity < wf.requested_quantity;
+
                   return (
-                    <div key={idx} className="p-3 bg-white hover:bg-slate-50/50 transition-colors">
+                    <div key={idx} className="p-3 bg-white hover:bg-slate-50/50 transition-colors space-y-2">
                       <div className="flex items-start justify-between gap-3">
                         <div className="flex-1">
                           <div className="flex items-center gap-2">
@@ -194,6 +562,89 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
                             </span>
                           )}
                         </div>
+                      </div>
+
+                      {/* Item Fulfillment & Shortage Status Bar */}
+                      <div className="bg-slate-50 p-2 rounded-xl border border-slate-200 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                        <div className="flex items-center gap-2">
+                          <span className="text-slate-500 font-medium">الكمية المطلوبة:</span>
+                          <span className="font-bold text-slate-800">{wf?.requested_quantity ?? item.quantity}</span>
+
+                          <span className="text-slate-400">|</span>
+
+                          <span className="text-slate-500 font-medium">المتوفر بالمطبخ:</span>
+                          <span className="font-bold text-slate-900">
+                            {wf?.available_quantity !== null && wf?.available_quantity !== undefined
+                              ? `${wf.available_quantity} قطعة`
+                              : `${item.quantity} قطعة (افتراضي)`}
+                          </span>
+                        </div>
+
+                        {/* Customer Decision Badge */}
+                        {isShortage && (
+                          <div className="flex items-center gap-1.5">
+                            {wf.customer_decision === 'approved_replacement' ? (
+                              <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-md font-bold text-[10px] flex items-center gap-1">
+                                <CheckCircle className="w-3 h-3 text-emerald-600" />
+                                <span>
+                                  وافق العميل على البديل: {wf.substitute_item_name || 'بديل معتمد'} ({wf.substitute_price ?? 0} ج.م)
+                                </span>
+                              </span>
+                            ) : wf.customer_decision === 'remove_item' ? (
+                              <span className="px-2 py-0.5 bg-rose-100 text-rose-800 border border-rose-200 rounded-md font-bold text-[10px] flex items-center gap-1">
+                                <XCircle className="w-3 h-3 text-rose-600" />
+                                <span>تم حذف الصنف من الفاتورة بناءً على اختيار العميل</span>
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 bg-amber-100 text-amber-800 border border-amber-300 rounded-md font-bold text-[10px] flex items-center gap-1 animate-pulse">
+                                <HelpCircle className="w-3 h-3 text-amber-600" />
+                                <span>بانتظار قرار العميل على النقص</span>
+                              </span>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Inline quantity update for missing items */}
+                        {(isPending || isAccepted) && (
+                          <div className="mr-auto flex items-center gap-1.5">
+                            {isEditingQty ? (
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max={wf?.requested_quantity ?? item.quantity}
+                                  value={editingQtyValue}
+                                  onChange={(e) => setEditingQtyValue(parseInt(e.target.value) || 0)}
+                                  className="w-14 px-2 py-0.5 bg-white border border-amber-400 rounded-md font-bold text-center text-xs"
+                                />
+                                <button
+                                  onClick={() => handleSaveItemFulfillment(wf?.order_item_id || itemId)}
+                                  disabled={isSubmitting}
+                                  className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md text-[10px] font-bold"
+                                  title="حفظ الكمية المتاحة"
+                                >
+                                  حفظ
+                                </button>
+                                <button
+                                  onClick={() => setEditingItemQtyId(null)}
+                                  className="px-1.5 py-0.5 text-slate-400 hover:text-slate-600 text-[10px]"
+                                >
+                                  إلغاء
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => {
+                                  setEditingItemQtyId(wf?.order_item_id || itemId);
+                                  setEditingQtyValue(wf?.available_quantity ?? item.quantity);
+                                }}
+                                className="px-2 py-0.5 bg-white hover:bg-amber-50 text-amber-800 font-bold border border-slate-200 rounded-md text-[10px] cursor-pointer"
+                              >
+                                تسجيل نقص الصنف
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
@@ -289,25 +740,220 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
           </div>
         </div>
 
-        {/* Footer Notice & Controlled Actions (Stage 1 Policy) */}
-        <div className="p-4 sm:p-5 border-t border-slate-100 bg-slate-50 flex flex-col sm:flex-row items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-xs text-amber-900 bg-amber-50 border border-amber-200/80 px-3 py-2 rounded-xl w-full sm:w-auto">
-            <Info className="w-4 h-4 text-amber-600 shrink-0" />
-            <div>
-              <span className="font-bold">المرحلة الأولى (الجلب والاستقبال اللحظي): </span>
-              <span className="text-slate-700 text-[11px]">
-                دورة تغيير حالات الطلب (قبول/رفض/تجهيز) محجوزة للمرحلة الثانية بعد اعتماد الصلاحيات الرسمية.
-              </span>
-            </div>
-          </div>
+        {/* Phase 2 Interactive Action Flow Footer */}
+        <div className="p-4 sm:p-5 border-t border-slate-100 bg-slate-50 space-y-3">
+          {/* Sub-Dialog: Acceptance Route Selector */}
+          {showAcceptDialog && (
+            <div className="p-4 bg-white rounded-2xl border-2 border-amber-400 shadow-md space-y-3">
+              <h4 className="font-black text-slate-900 text-xs flex items-center gap-1.5">
+                <Truck className="w-4 h-4 text-amber-600" />
+                اختر طريقة التوصيل لقبول الطلب:
+              </h4>
 
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={onClose}
-              className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl font-bold text-xs transition-colors cursor-pointer"
-            >
-              إغلاق النافذة
-            </button>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                {/* Option 1: Restaurant Delivery */}
+                <label
+                  className={`p-3 rounded-xl border flex items-start gap-2.5 cursor-pointer transition-all ${
+                    !restaurant.restaurantDeliveryEnabled
+                      ? 'bg-slate-100 border-slate-200 opacity-60 cursor-not-allowed'
+                      : selectedRoute === 'restaurant_delivery'
+                      ? 'bg-emerald-50 border-emerald-500 ring-2 ring-emerald-500/20'
+                      : 'bg-white border-slate-200 hover:border-slate-300'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="route_choice"
+                    value="restaurant_delivery"
+                    disabled={!restaurant.restaurantDeliveryEnabled}
+                    checked={selectedRoute === 'restaurant_delivery'}
+                    onChange={() => setSelectedRoute('restaurant_delivery')}
+                    className="mt-0.5 text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <div>
+                    <span className="font-bold text-slate-900 block">دليفري المطعم (توصيل ذاتي)</span>
+                    <span className="text-[11px] text-slate-500 block">
+                      يقوم طيار المطعم بتوصيل الطلب للعميل مباشرة.
+                    </span>
+                    {!restaurant.restaurantDeliveryEnabled && (
+                      <span className="text-[10px] text-rose-600 font-bold block mt-1">
+                        (غير مفعل في إعدادات المطعم)
+                      </span>
+                    )}
+                  </div>
+                </label>
+
+                {/* Option 2: Talabaty Driver Delivery */}
+                <label
+                  className={`p-3 rounded-xl border flex items-start gap-2.5 cursor-pointer transition-all ${
+                    selectedRoute === 'driver_delivery'
+                      ? 'bg-blue-50 border-blue-500 ring-2 ring-blue-500/20'
+                      : 'bg-white border-slate-200 hover:border-slate-300'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="route_choice"
+                    value="driver_delivery"
+                    checked={selectedRoute === 'driver_delivery'}
+                    onChange={() => setSelectedRoute('driver_delivery')}
+                    className="mt-0.5 text-blue-600 focus:ring-blue-500"
+                  />
+                  <div>
+                    <span className="font-bold text-slate-900 block">دليفري طلباتي (مندوب)</span>
+                    <span className="text-[11px] text-slate-500 block">
+                      إسناد الطلب لشبكة كباتن التوصيل بمنظومة طلباتي.
+                    </span>
+                  </div>
+                </label>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  onClick={() => setShowAcceptDialog(false)}
+                  disabled={isSubmitting}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs cursor-pointer"
+                >
+                  إلغاء
+                </button>
+                <button
+                  onClick={handleAcceptOrder}
+                  disabled={isSubmitting}
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
+                >
+                  {isSubmitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>تأكيد قبول الطلب</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Sub-Dialog: Rejection Prompt */}
+          {showRejectDialog && (
+            <div className="p-4 bg-white rounded-2xl border-2 border-rose-400 shadow-md space-y-3">
+              <h4 className="font-black text-rose-900 text-xs flex items-center gap-1.5">
+                <AlertTriangle className="w-4 h-4 text-rose-600" />
+                يرجى كتابة سبب رفض الطلب (إلزامي):
+              </h4>
+              <textarea
+                rows={2}
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="مثال: انتهاء بعض المكونات الأساسية، المطعم لديه ضغط طلبات كبير..."
+                className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-rose-500"
+              />
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  onClick={() => setShowRejectDialog(false)}
+                  disabled={isSubmitting}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs cursor-pointer"
+                >
+                  إلغاء
+                </button>
+                <button
+                  onClick={handleRejectOrder}
+                  disabled={isSubmitting || !rejectReason.trim()}
+                  className="px-5 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-black rounded-xl text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
+                >
+                  {isSubmitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>تأكيد الرفض</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Action Buttons Bar */}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+            {/* Status condition notes / tooltips */}
+            <div className="text-[11px] text-slate-500">
+              {hasUnresolvedMissingItems && (
+                <span className="text-amber-700 font-bold block">
+                  • يوجد نقص في الأصناف بانتظار قرار العميل قبل السماح ببدء التجهيز.
+                </span>
+              )}
+              {isDriverDelivery && !isDriverAssigned && isAccepted && (
+                <span className="text-blue-700 font-bold block">
+                  • في توصيل طلباتي: لا يمكن بدء التجهيز إلا بعد إسناد طيار للطلب.
+                </span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 self-end sm:self-center">
+              {/* If Order is Pending: Show Accept & Reject */}
+              {isPending && !showAcceptDialog && !showRejectDialog && (
+                <>
+                  <button
+                    onClick={() => setShowRejectDialog(true)}
+                    disabled={isSubmitting}
+                    className="px-4 py-2 bg-rose-100 hover:bg-rose-200 text-rose-800 font-bold rounded-xl text-xs transition-colors cursor-pointer"
+                  >
+                    رفض الطلب
+                  </button>
+                  <button
+                    onClick={() => setShowAcceptDialog(true)}
+                    disabled={isSubmitting}
+                    className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
+                  >
+                    <CheckCircle className="w-4 h-4" />
+                    <span>قبول الطلب...</span>
+                  </button>
+                </>
+              )}
+
+              {/* If Order is Accepted / Awaiting Driver: Show Start Preparing */}
+              {isAccepted && !isPreparing && (
+                <button
+                  onClick={handleStartPreparing}
+                  disabled={isSubmitting || !canStartPreparing}
+                  className="px-5 py-2 bg-orange-600 hover:bg-orange-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-black rounded-xl text-xs flex items-center gap-1.5 shadow-xs cursor-pointer disabled:cursor-not-allowed"
+                  title={
+                    !canStartPreparing
+                      ? hasUnresolvedMissingItems
+                        ? 'بانتظار قرار العميل على الأصناف الناقصة'
+                        : 'بانتظار إسناد كابتن للطلب'
+                      : 'نقل الطلب لحالة قيد التجهيز في المطبخ'
+                  }
+                >
+                  {isSubmitting ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Flame className="w-4 h-4" />
+                  )}
+                  <span>بدء التجهيز بالمطبخ</span>
+                </button>
+              )}
+
+              {/* If Order is Preparing: Show Mark Ready */}
+              {isPreparing && (
+                <button
+                  onClick={handleMarkReady}
+                  disabled={isSubmitting}
+                  className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white font-black rounded-xl text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
+                >
+                  {isSubmitting ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <PackageCheck className="w-4 h-4" />
+                  )}
+                  <span>جاهز للتسليم</span>
+                </button>
+              )}
+
+              {/* If Order is Ready: Notice */}
+              {isReady && (
+                <span className="px-3 py-1.5 bg-purple-50 text-purple-900 border border-purple-200 rounded-xl font-bold text-xs flex items-center gap-1">
+                  <Check className="w-3.5 h-3.5 text-purple-600" />
+                  <span>الطلب جاهز وبانتظار الاستلام للتوصيل</span>
+                </span>
+              )}
+
+              <button
+                onClick={onClose}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white rounded-xl font-bold text-xs transition-colors cursor-pointer"
+              >
+                إغلاق
+              </button>
+            </div>
           </div>
         </div>
       </div>

@@ -47,15 +47,24 @@ export function mapDbStatusToOrderStatus(dbStatus: string): OrderStatus {
       return 'PENDING';
     case 'accepted':
       return 'ACCEPTED';
+    case 'awaiting_driver':
+    case 'searching_driver':
+    case 'awaiting_driver_assignment':
+      return 'AWAITING_DRIVER';
+    case 'assigned_to_driver':
+    case 'driver_assigned':
+      return 'ASSIGNED_TO_DRIVER';
     case 'preparing':
       return 'PREPARING';
     case 'ready':
       return 'READY';
-    case 'assigned_to_driver':
     case 'picked_up':
+      return 'PICKED_UP';
     case 'on_the_way':
-      return 'ACCEPTED'; // حالة نشطة مع المندوب
+      return 'ON_THE_WAY';
     case 'delivered':
+      return 'DELIVERED';
+    case 'completed':
       return 'COMPLETED';
     case 'rejected':
       return 'REJECTED';
@@ -73,26 +82,32 @@ export function getArabicStatusLabel(dbStatus: string | OrderStatus): string {
   const s = String(dbStatus || '').toLowerCase().trim();
   switch (s) {
     case 'pending':
-      return 'بانتظار التأكيد';
+      return 'بانتظار القبول';
     case 'awaiting_restaurant_confirmation':
       return 'بانتظار موافقة المطعم';
     case 'accepted':
       return 'تم القبول';
+    case 'awaiting_driver':
+    case 'searching_driver':
+    case 'awaiting_driver_assignment':
+      return 'بانتظار تأمين سائق';
+    case 'assigned_to_driver':
+    case 'driver_assigned':
+      return 'تم تأمين السائق';
     case 'preparing':
-      return 'قيد التجهيز بالمطبخ';
+      return 'جاري التجهيز';
     case 'ready':
       return 'جاهز للتسليم';
-    case 'assigned_to_driver':
-      return 'تم تعيين مندوب';
     case 'picked_up':
-      return 'تم الاستلام من المطعم';
+      return 'تم الاستلام';
     case 'on_the_way':
-      return 'في الطريق للعميل';
+      return 'في الطريق';
     case 'delivered':
+      return 'تم التوصيل';
     case 'completed':
       return 'مكتمل ومسلّم';
     case 'rejected':
-      return 'مرفوض من المطعم';
+      return 'مرفوض';
     case 'cancelled':
       return 'ملغي';
     default:
@@ -127,12 +142,16 @@ export function mapDbOrderToAppOrder(
   const deliveryFee = Number(dbOrder.delivery_fee) || 0;
   const grandTotal = Number(dbOrder.customer_total) || foodTotal + deliveryFee;
 
-  const commissionRatePct = Number(dbOrder.commission_percent_snapshot) || 10;
-  const adminCommissionRate = commissionRatePct / 100;
+  // لا نضع أي نسبة عمولة افتراضية من عندنا — نعتمد حصرياً على البيانات الفعلية
+  const commissionRatePct =
+    dbOrder.commission_percent_snapshot !== undefined && dbOrder.commission_percent_snapshot !== null
+      ? Number(dbOrder.commission_percent_snapshot)
+      : null;
+  const adminCommissionRate = commissionRatePct !== null ? commissionRatePct / 100 : 0;
   const adminFeeShare =
     dbOrder.admin_fee_share !== undefined && dbOrder.admin_fee_share !== null
       ? Number(dbOrder.admin_fee_share)
-      : Number((foodTotal * adminCommissionRate).toFixed(2));
+      : (commissionRatePct !== null ? Number((foodTotal * adminCommissionRate).toFixed(2)) : 0);
 
   const restaurantFeeShare =
     dbOrder.restaurant_fee_share !== undefined && dbOrder.restaurant_fee_share !== null
@@ -154,6 +173,7 @@ export function mapDbOrderToAppOrder(
     const qty = Number(item.quantity) || 1;
     const discount = Number(item.discount_amount) || 0;
     return {
+      id: item.id,
       itemId: item.menu_item_id || item.id,
       name: item.item_name_snapshot || 'صنف بدون اسم',
       priceAtOrder: unitPrice,
@@ -164,7 +184,7 @@ export function mapDbOrderToAppOrder(
     };
   });
 
-  // تحويل سجل الحالات
+  // تحويل سجل الحالات الفعلي فقط من قاعدة البيانات (دون اختراع سجلات وهمية)
   const history: OrderStatusHistory[] = statusHistory.map((h) => ({
     status: mapDbStatusToOrderStatus(h.new_status),
     rawStatus: h.new_status,
@@ -172,17 +192,6 @@ export function mapDbOrderToAppOrder(
     note: h.note || undefined,
     updatedBy: h.changed_by || 'نظام طلبات البيت',
   }));
-
-  // إذا كان سجل الحالات فارغاً، نضع الحالة الحالية على الأقل
-  if (history.length === 0) {
-    history.push({
-      status: mapDbStatusToOrderStatus(dbOrder.status),
-      rawStatus: dbOrder.status,
-      timestamp: dbOrder.created_at,
-      note: 'تم استلام الطلب وتسجيله في قاعدة البيانات',
-      updatedBy: 'نظام طلبات البيت',
-    });
-  }
 
   const governorate =
     dbOrder.delivery_governorate_name_snapshot || 'غير محدد';
@@ -280,47 +289,51 @@ export async function fetchRestaurantOrders(
 
     // 2. جلب تفاصيل الأصناف المرتبطة بهذه الطلبات
     let itemsMap: Record<string, DbRestaurantOrderItem[]> = {};
-    try {
-      const { data: itemsData, error: itemsError } = await supabase
-        .from('restaurant_order_items')
-        .select('*')
-        .in('order_id', orderIds);
+    const { data: itemsData, error: itemsError } = await supabase
+      .from('restaurant_order_items')
+      .select('*')
+      .in('order_id', orderIds);
 
-      if (itemsError) {
-        console.warn('Warning: Failed to fetch restaurant_order_items:', itemsError);
-      } else if (itemsData) {
-        (itemsData as DbRestaurantOrderItem[]).forEach((item) => {
-          if (!itemsMap[item.order_id]) {
-            itemsMap[item.order_id] = [];
-          }
-          itemsMap[item.order_id].push(item);
-        });
-      }
-    } catch (e) {
-      console.warn('Non-blocking error reading order items:', e);
+    if (itemsError) {
+      console.error('Error fetching restaurant_order_items:', itemsError);
+      return {
+        orders: [],
+        error: `فشل جلب تفاصيل أصناف الطلبات: ${itemsError.message}`,
+      };
+    }
+
+    if (itemsData) {
+      (itemsData as DbRestaurantOrderItem[]).forEach((item) => {
+        if (!itemsMap[item.order_id]) {
+          itemsMap[item.order_id] = [];
+        }
+        itemsMap[item.order_id].push(item);
+      });
     }
 
     // 3. جلب سجل الحالات المرتبط بهذه الطلبات
     let historyMap: Record<string, DbRestaurantOrderStatusHistory[]> = {};
-    try {
-      const { data: historyData, error: historyError } = await supabase
-        .from('restaurant_order_status_history')
-        .select('*')
-        .in('order_id', orderIds)
-        .order('created_at', { ascending: true });
+    const { data: historyData, error: historyError } = await supabase
+      .from('restaurant_order_status_history')
+      .select('*')
+      .in('order_id', orderIds)
+      .order('created_at', { ascending: true });
 
-      if (historyError) {
-        console.warn('Warning: Failed to fetch restaurant_order_status_history:', historyError);
-      } else if (historyData) {
-        (historyData as DbRestaurantOrderStatusHistory[]).forEach((hist) => {
-          if (!historyMap[hist.order_id]) {
-            historyMap[hist.order_id] = [];
-          }
-          historyMap[hist.order_id].push(hist);
-        });
-      }
-    } catch (e) {
-      console.warn('Non-blocking error reading status history:', e);
+    if (historyError) {
+      console.error('Error fetching restaurant_order_status_history:', historyError);
+      return {
+        orders: [],
+        error: `فشل جلب سجل حالات الطلبات: ${historyError.message}`,
+      };
+    }
+
+    if (historyData) {
+      (historyData as DbRestaurantOrderStatusHistory[]).forEach((hist) => {
+        if (!historyMap[hist.order_id]) {
+          historyMap[hist.order_id] = [];
+        }
+        historyMap[hist.order_id].push(hist);
+      });
     }
 
     // 4. دمج البيانات وبناء كائنات الطلبات
@@ -376,6 +389,13 @@ export async function fetchOrderDetails(
         .eq('order_id', orderId)
         .order('created_at', { ascending: true }),
     ]);
+
+    if (itemsRes.error) {
+      return { order: null, error: `فشل جلب تفاصيل أصناف الطلب: ${itemsRes.error.message}` };
+    }
+    if (histRes.error) {
+      return { order: null, error: `فشل جلب سجل حالات الطلب: ${histRes.error.message}` };
+    }
 
     const order = mapDbOrderToAppOrder(
       orderData as DbRestaurantOrder,
