@@ -10,6 +10,7 @@ import {
   Wallet,
   Receipt,
   Scale,
+  Truck,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 
@@ -44,6 +45,16 @@ export const StatCards: React.FC<StatCardsProps> = ({
       border: 'border-blue-200',
       filter: 'ACCEPTED',
       urgent: false,
+    },
+    {
+      title: 'بانتظار تأمين طيار',
+      count: stats.awaitingDriverOrdersCount,
+      icon: Truck,
+      color: 'text-sky-600',
+      bg: 'bg-sky-50',
+      border: 'border-sky-200',
+      filter: 'AWAITING_DRIVER',
+      urgent: stats.awaitingDriverOrdersCount > 0,
     },
     {
       title: 'قيد التجهيز',
@@ -89,107 +100,107 @@ export const StatCards: React.FC<StatCardsProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* 4 Financial Highlight Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-        {/* Total Sales */}
+      {/* 4 Financial Highlight Cards - 2 Cards Per Row (Including Mobile) */}
+      <div className="grid grid-cols-2 gap-2.5 sm:gap-4">
+        {/* الصف الأول: 1. صافي مستحقات المطعم */}
         <div
           onClick={onNavigateToFinance}
-          className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs hover:border-amber-400 transition-all cursor-pointer group"
+          className="bg-white p-3.5 sm:p-5 rounded-2xl border border-emerald-200/80 shadow-xs hover:border-emerald-400 transition-all cursor-pointer group bg-gradient-to-br from-white to-emerald-50/30 w-full"
         >
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold text-slate-500">إجمالي مبيعات الطعام</span>
-            <div className="p-2 bg-blue-50 text-blue-600 rounded-xl group-hover:scale-110 transition-transform">
-              <TrendingUp className="w-5 h-5" />
+          <div className="flex items-center justify-between mb-2 sm:mb-2.5">
+            <span className="text-[11px] sm:text-xs font-bold text-emerald-800 leading-tight">صافي مستحقات المطعم</span>
+            <div className="p-2 sm:p-2.5 bg-emerald-100 text-emerald-700 rounded-xl group-hover:scale-110 transition-transform shrink-0">
+              <Wallet className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
           </div>
-          <div className="flex items-baseline gap-1.5">
-            <span className="text-2xl font-black text-slate-900">
-              {stats.netFoodSales.toLocaleString('ar-EG')}
-            </span>
-            <span className="text-xs font-bold text-slate-500">ج.م</span>
-          </div>
-          <p className="text-[11px] text-slate-400 mt-1">
-            صافي قيمة الطعام بعد الخصم للمبيعات المكتملة
-          </p>
-        </div>
-
-        {/* Net Restaurant Due */}
-        <div
-          onClick={onNavigateToFinance}
-          className="bg-white p-4 rounded-2xl border border-emerald-200/80 shadow-xs hover:border-emerald-400 transition-all cursor-pointer group bg-gradient-to-br from-white to-emerald-50/30"
-        >
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold text-emerald-800">صافي مستحقات المطعم</span>
-            <div className="p-2 bg-emerald-100 text-emerald-700 rounded-xl group-hover:scale-110 transition-transform">
-              <Wallet className="w-5 h-5" />
-            </div>
-          </div>
-          <div className="flex items-baseline gap-1.5">
-            <span className="text-2xl font-black text-emerald-700">
+          <div className="flex items-baseline gap-1 sm:gap-1.5">
+            <span className="text-lg sm:text-2xl font-black text-emerald-700">
               {stats.totalNetRestaurantDue.toLocaleString('ar-EG')}
             </span>
-            <span className="text-xs font-bold text-emerald-800">ج.م</span>
+            <span className="text-[10px] sm:text-xs font-bold text-emerald-800">ج.م</span>
           </div>
-          <p className="text-[11px] text-emerald-700/80 mt-1">
+          <p className="text-[10px] sm:text-[11px] text-emerald-700/80 mt-1 sm:mt-1.5 leading-tight">
             شامل رسوم التوصيل الذاتي بعد خصم العمولة
           </p>
         </div>
 
-        {/* Admin Commission Due */}
+        {/* الصف الأول: 2. إجمالي مبيعات الطعام */}
         <div
           onClick={onNavigateToFinance}
-          className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs hover:border-amber-400 transition-all cursor-pointer group"
+          className="bg-white p-3.5 sm:p-5 rounded-2xl border border-slate-200 shadow-xs hover:border-amber-400 transition-all cursor-pointer group w-full"
         >
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold text-slate-500">
-              عمولة الإدارة المستحقة ({restaurant.adminCommissionPercent}%)
-            </span>
-            <div className="p-2 bg-amber-50 text-amber-600 rounded-xl group-hover:scale-110 transition-transform">
-              <Scale className="w-5 h-5" />
+          <div className="flex items-center justify-between mb-2 sm:mb-2.5">
+            <span className="text-[11px] sm:text-xs font-bold text-slate-500 leading-tight">إجمالي مبيعات الطعام</span>
+            <div className="p-2 sm:p-2.5 bg-blue-50 text-blue-600 rounded-xl group-hover:scale-110 transition-transform shrink-0">
+              <TrendingUp className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
           </div>
-          <div className="flex items-baseline gap-1.5">
-            <span className="text-2xl font-black text-slate-900">
-              {stats.totalAdminCommission.toLocaleString('ar-EG')}
+          <div className="flex items-baseline gap-1 sm:gap-1.5">
+            <span className="text-lg sm:text-2xl font-black text-slate-900">
+              {stats.netFoodSales.toLocaleString('ar-EG')}
             </span>
-            <span className="text-xs font-bold text-slate-500">ج.م</span>
+            <span className="text-[10px] sm:text-xs font-bold text-slate-500">ج.م</span>
           </div>
-          <p className="text-[11px] text-slate-400 mt-1">
-            محتسبة على صافي الطعام فقط (بدون التوصيل)
+          <p className="text-[10px] sm:text-[11px] text-slate-400 mt-1 sm:mt-1.5 leading-tight">
+            صافي قيمة الطعام بعد الخصم للمبيعات المكتملة
           </p>
         </div>
 
-        {/* Unsettled Balances */}
+        {/* الصف الثاني: 3. المبالغ غير المسواة */}
         <div
           onClick={onNavigateToFinance}
-          className="bg-white p-4 rounded-2xl border border-amber-200 shadow-xs hover:border-amber-400 transition-all cursor-pointer group bg-gradient-to-br from-white to-amber-50/30"
+          className="bg-white p-3.5 sm:p-5 rounded-2xl border border-amber-200 shadow-xs hover:border-amber-400 transition-all cursor-pointer group bg-gradient-to-br from-white to-amber-50/30 w-full"
         >
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-bold text-amber-900">المبالغ غير المسواة</span>
-            <div className="p-2 bg-amber-100 text-amber-700 rounded-xl group-hover:scale-110 transition-transform">
-              <Receipt className="w-5 h-5" />
+          <div className="flex items-center justify-between mb-2 sm:mb-2.5">
+            <span className="text-[11px] sm:text-xs font-bold text-amber-900 leading-tight">المبالغ غير المسواة</span>
+            <div className="p-2 sm:p-2.5 bg-amber-100 text-amber-700 rounded-xl group-hover:scale-110 transition-transform shrink-0">
+              <Receipt className="w-4 h-4 sm:w-5 sm:h-5" />
             </div>
           </div>
-          <div className="flex items-baseline gap-1.5">
-            <span className="text-2xl font-black text-amber-700">
+          <div className="flex items-baseline gap-1 sm:gap-1.5">
+            <span className="text-lg sm:text-2xl font-black text-amber-700">
               {stats.totalUnsettled.toLocaleString('ar-EG')}
             </span>
-            <span className="text-xs font-bold text-amber-900">ج.م</span>
+            <span className="text-[10px] sm:text-xs font-bold text-amber-900">ج.م</span>
           </div>
-          <p className="text-[11px] text-amber-800/80 mt-1">
+          <p className="text-[10px] sm:text-[11px] text-amber-800/80 mt-1 sm:mt-1.5 leading-tight">
             جاهزة للإرسال في دورة التسوية القادمة
+          </p>
+        </div>
+
+        {/* الصف الثاني: 4. عمولة الإدارة المستحقة */}
+        <div
+          onClick={onNavigateToFinance}
+          className="bg-white p-3.5 sm:p-5 rounded-2xl border border-slate-200 shadow-xs hover:border-amber-400 transition-all cursor-pointer group w-full"
+        >
+          <div className="flex items-center justify-between mb-2 sm:mb-2.5">
+            <span className="text-[11px] sm:text-xs font-bold text-slate-500 leading-tight">
+              عمولة الإدارة المستحقة ({restaurant.adminCommissionPercent}%)
+            </span>
+            <div className="p-2 sm:p-2.5 bg-amber-50 text-amber-600 rounded-xl group-hover:scale-110 transition-transform shrink-0">
+              <Scale className="w-4 h-4 sm:w-5 sm:h-5" />
+            </div>
+          </div>
+          <div className="flex items-baseline gap-1 sm:gap-1.5">
+            <span className="text-lg sm:text-2xl font-black text-slate-900">
+              {stats.totalAdminCommission.toLocaleString('ar-EG')}
+            </span>
+            <span className="text-[10px] sm:text-xs font-bold text-slate-500">ج.م</span>
+          </div>
+          <p className="text-[10px] sm:text-[11px] text-slate-400 mt-1 sm:mt-1.5 leading-tight">
+            محتسبة على صافي الطعام فقط (بدون التوصيل)
           </p>
         </div>
       </div>
 
-      {/* 6 Order Lifecycle Counters */}
+      {/* Order Lifecycle Counters */}
       <div>
         <div className="flex items-center justify-between mb-2.5">
           <h3 className="text-xs font-bold text-slate-700">متابعة مسار الطلبات الحالية:</h3>
           <span className="text-[11px] text-slate-400">إجمالي {stats.totalOrdersCount} طلب مسجل</span>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-2.5">
           {orderStats.map((item) => {
             const Icon = item.icon;
             return (

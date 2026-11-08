@@ -13,6 +13,8 @@ import {
   Menu as MenuIcon,
   X,
   Volume2,
+  Loader2,
+  AlertCircle,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 
@@ -31,7 +33,7 @@ export const Header: React.FC<HeaderProps> = ({
   const {
     restaurant,
     owner,
-    updateRestaurant,
+    updateRestaurantSettingsDb,
     logout,
     notifications,
     injectMockOrder,
@@ -42,11 +44,26 @@ export const Header: React.FC<HeaderProps> = ({
 
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [showNewOrderMenu, setShowNewOrderMenu] = useState(false);
+  const [isTogglingOpen, setIsTogglingOpen] = useState(false);
+  const [toggleOpenError, setToggleOpenError] = useState<string | null>(null);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
-  const toggleRestaurantOpen = () => {
-    updateRestaurant({ isOpen: !restaurant.isOpen });
+  const toggleRestaurantOpen = async () => {
+    if (isTogglingOpen) return;
+    setIsTogglingOpen(true);
+    setToggleOpenError(null);
+    try {
+      const nextIsOpen = !restaurant.isOpen;
+      const res = await updateRestaurantSettingsDb({ is_open: nextIsOpen });
+      if (!res.success) {
+        setToggleOpenError(res.error || 'فشل تحديث حالة المطعم في قاعدة البيانات.');
+      }
+    } catch (err: any) {
+      setToggleOpenError(err?.message || 'تعذر الاتصال بقاعدة البيانات.');
+    } finally {
+      setIsTogglingOpen(false);
+    }
   };
 
   return (
@@ -106,14 +123,22 @@ export const Header: React.FC<HeaderProps> = ({
             </span>
             <button
               onClick={toggleRestaurantOpen}
-              className={`text-xs px-2.5 py-1 rounded-lg font-bold transition-colors ${
+              disabled={isTogglingOpen}
+              className={`text-xs px-2.5 py-1 rounded-lg font-bold transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${
                 restaurant.isOpen
                   ? 'bg-rose-100 text-rose-700 hover:bg-rose-200'
                   : 'bg-emerald-600 text-white hover:bg-emerald-700'
               }`}
-              title="تغيير حالة استقبال الطلبات"
+              title="تغيير حالة استقبال الطلبات وحفظها في قاعدة البيانات"
             >
-              {restaurant.isOpen ? 'إغلاق مؤقت' : 'فتح المطعم'}
+              {isTogglingOpen ? (
+                <>
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  <span>جاري الحفظ...</span>
+                </>
+              ) : (
+                <span>{restaurant.isOpen ? 'إغلاق مؤقت' : 'فتح المطعم'}</span>
+              )}
             </button>
           </div>
 
@@ -254,6 +279,21 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
       </div>
+
+      {toggleOpenError && (
+        <div className="bg-rose-50 border-t border-rose-200 px-4 py-2 flex items-center justify-between text-xs text-rose-800">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span>خطأ في حفظ حالة فتح/إغلاق المطعم: {toggleOpenError}</span>
+          </div>
+          <button
+            onClick={() => setToggleOpenError(null)}
+            className="text-rose-600 hover:text-rose-900 font-bold p-1 cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
     </header>
   );
 };

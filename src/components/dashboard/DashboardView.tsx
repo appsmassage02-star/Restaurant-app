@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   AlertTriangle,
   PlusCircle,
@@ -11,6 +11,7 @@ import {
   Truck,
   Eye,
   ChevronLeft,
+  Loader2,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { StatCards } from './StatCards';
@@ -27,7 +28,25 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onNavigate,
   onOpenOrderDetails,
 }) => {
-  const { restaurant, orders, stats, updateRestaurant } = useApp();
+  const { restaurant, orders, stats, updateRestaurantSettingsDb } = useApp();
+  const [isOpeningRestaurant, setIsOpeningRestaurant] = useState(false);
+  const [openError, setOpenError] = useState<string | null>(null);
+
+  const handleOpenRestaurant = async () => {
+    if (isOpeningRestaurant) return;
+    setIsOpeningRestaurant(true);
+    setOpenError(null);
+    try {
+      const res = await updateRestaurantSettingsDb({ is_open: true });
+      if (!res.success) {
+        setOpenError(res.error || 'فشل فتح المطعم في قاعدة البيانات.');
+      }
+    } catch (err: any) {
+      setOpenError(err?.message || 'تعذر الاتصال بقاعدة البيانات.');
+    } finally {
+      setIsOpeningRestaurant(false);
+    }
+  };
 
   const recentOrders = orders.slice(0, 5);
 
@@ -100,26 +119,41 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     <div className="space-y-6">
       {/* Closed Warning Banner */}
       {!restaurant.isOpen && (
-        <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-rose-100 text-rose-700 rounded-xl shrink-0">
-              <AlertTriangle className="w-5 h-5" />
+        <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl flex flex-col gap-2 shadow-xs">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-rose-100 text-rose-700 rounded-xl shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-rose-900">
+                  المطعم مغلق حاليًا أمام استقبال طلبات الزبائن
+                </h4>
+                <p className="text-xs text-rose-700 mt-0.5">
+                  لن يظهر مطعمك كمتاح للطلب في تطبيق العملاء، ولكن يمكنك متابعة الطلبات السابقة وتحديث المنيو بشكل طبيعي.
+                </p>
+              </div>
             </div>
-            <div>
-              <h4 className="text-sm font-bold text-rose-900">
-                المطعم مغلق حاليًا أمام استقبال طلبات الزبائن
-              </h4>
-              <p className="text-xs text-rose-700 mt-0.5">
-                لن يظهر مطعمك كمتاح للطلب في تطبيق العملاء، ولكن يمكنك متابعة الطلبات السابقة وتحديث المنيو بشكل طبيعي.
-              </p>
-            </div>
+            <button
+              onClick={handleOpenRestaurant}
+              disabled={isOpeningRestaurant}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-bold text-xs rounded-xl shadow-xs shrink-0 cursor-pointer flex items-center gap-1.5"
+            >
+              {isOpeningRestaurant ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>جاري الفتح في قاعدة البيانات...</span>
+                </>
+              ) : (
+                <span>فتح استقبال الطلبات الآن</span>
+              )}
+            </button>
           </div>
-          <button
-            onClick={() => updateRestaurant({ isOpen: true })}
-            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs shrink-0 cursor-pointer"
-          >
-            فتح استقبال الطلبات الآن
-          </button>
+          {openError && (
+            <p className="text-xs text-rose-700 font-semibold bg-white p-2 rounded-lg border border-rose-200">
+              {openError}
+            </p>
+          )}
         </div>
       )}
 

@@ -809,7 +809,7 @@ export const SettingsView: React.FC = () => {
             />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <label className="block text-slate-700 font-bold mb-1">العنوان التفصيلي</label>
               <input
@@ -822,7 +822,7 @@ export const SettingsView: React.FC = () => {
             </div>
 
             <div>
-              <label className="block text-slate-700 font-bold mb-1">رسوم التوصيل العامة الافتراضية (ج.م)</label>
+              <label className="block text-slate-700 font-bold mb-1">رسوم التوصيل العامة (ج.م) *</label>
               <input
                 type="number"
                 min="0"
@@ -835,38 +835,85 @@ export const SettingsView: React.FC = () => {
                 className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold disabled:opacity-50"
               />
             </div>
+
+            <div>
+              <label className="block text-slate-700 font-bold mb-1">أقصى نطاق توصيل عام (كم) *</label>
+              <input
+                type="number"
+                min="1"
+                max="30"
+                step="0.5"
+                disabled={isSavingBasic}
+                value={deliveryRadiusKm}
+                onChange={(e) =>
+                  setDeliveryRadiusKm(e.target.value === '' ? 5 : parseFloat(e.target.value))
+                }
+                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold disabled:opacity-50"
+              />
+            </div>
+          </div>
+
+          {/* Logo & Visuals note */}
+          <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <img
+                src={logo || restaurant.logo}
+                alt={name}
+                className="w-12 h-12 rounded-xl object-cover border border-amber-200 shadow-xs"
+              />
+              <div>
+                <p className="text-xs font-bold text-slate-800">شعار وصورة المطعم الحالية</p>
+                <p className="text-[11px] text-slate-500">
+                  تُدار وسائط وشعارات المطاعم وتُعتمد مركزيًا من إدارة المنظومة (غير متاح للرفع المباشر في هذه المرحلة).
+                </p>
+              </div>
+            </div>
+            <span className="text-[10px] font-bold text-slate-600 bg-slate-200/80 px-2.5 py-1 rounded-lg shrink-0">
+              إدارة مركزية
+            </span>
           </div>
         </div>
 
-        {/* Operating Hours */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
-          <h3 className="text-sm font-bold text-slate-800 border-b border-slate-100 pb-2 flex items-center gap-2">
-            <Clock className="w-4 h-4 text-amber-600" />
-            ساعات ومواعيد العمل
-          </h3>
+        {/* Operating Hours - Explicitly marked as unsupported in schema */}
+        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-2">
+            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+              <Clock className="w-4 h-4 text-amber-600" />
+              ساعات ومواعيد العمل
+            </h3>
+            <span className="text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-0.5 rounded-full w-fit">
+              غير مدعوم حاليًا في المخطط (محدد مركزيًا)
+            </span>
+          </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <p className="text-xs text-slate-500 leading-relaxed">
+            مواعيد العمل والعطلات محددة وفق وثيقة الاعتماد المركزي، ولا توجد أعمدة مخصصة لها في جدول <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-700 font-mono">restaurants</code> الفعلي. يتم التحكم في استقبال الطلبات لحظيًا عبر زر الفتح/الإغلاق المعتمد أعلاه.
+          </p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
             <div>
-              <label className="block text-slate-700 font-bold mb-1">ساعات العمل اليومية</label>
+              <label className="block text-slate-700 font-bold mb-1">
+                ساعات العمل اليومية
+                <span className="text-[10px] text-slate-400 font-normal mr-1.5">(للقراءة فقط)</span>
+              </label>
               <input
                 type="text"
-                disabled={isSavingBasic}
+                disabled
                 value={openingHours}
-                onChange={(e) => setOpeningHours(e.target.value)}
-                placeholder="مثال: من 11:00 ص حتى 02:00 ص"
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs disabled:opacity-50"
+                className="w-full px-3.5 py-2.5 bg-slate-100 border border-slate-200 rounded-xl text-xs text-slate-500 cursor-not-allowed"
               />
             </div>
 
             <div>
-              <label className="block text-slate-700 font-bold mb-1">أيام الإجازات</label>
+              <label className="block text-slate-700 font-bold mb-1">
+                أيام الإجازات
+                <span className="text-[10px] text-slate-400 font-normal mr-1.5">(للقراءة فقط)</span>
+              </label>
               <input
                 type="text"
-                disabled={isSavingBasic}
+                disabled
                 value={holidays}
-                onChange={(e) => setHolidays(e.target.value)}
-                placeholder="مثال: يعمل طوال الأسبوع بدون إجازات"
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs disabled:opacity-50"
+                className="w-full px-3.5 py-2.5 bg-slate-100 border border-slate-200 rounded-xl text-xs text-slate-500 cursor-not-allowed"
               />
             </div>
           </div>

@@ -16,10 +16,12 @@ export interface RestaurantFetchResult {
 
 export interface ProfileFetchResult {
   profile: DbProfile | null;
+  accountStatus: 'active' | 'banned' | 'suspended';
   isBanned: boolean;
   isSuspended: boolean;
   banReason?: string;
   error: string | null;
+  isConnectionError?: boolean;
 }
 
 export interface CreateRestaurantResult {
@@ -129,43 +131,64 @@ export async function fetchUserProfile(
   userId: string
 ): Promise<ProfileFetchResult> {
   if (!isSupabaseConfigured || !userId) {
-    return { profile: null, isBanned: false, isSuspended: false, error: null };
+    return {
+      profile: null,
+      accountStatus: 'active',
+      isBanned: false,
+      isSuspended: false,
+      error: null,
+    };
   }
 
   try {
     const { data, error } = await supabase
       .from('profiles')
-      .select('id, full_name, name, phone, email, role, is_blocked, status, created_at, updated_at')
+      .select('id, full_name, phone, email, is_blocked, status, created_at, updated_at')
       .eq('id', userId)
       .maybeSingle();
 
     if (error) {
-      console.warn('Could not fetch profile:', error.message);
+      console.warn('Could not fetch profile from Supabase:', error.message);
       return {
         profile: null,
+        accountStatus: 'active',
         isBanned: false,
         isSuspended: false,
-        error: `تعذر جلب الملف الشخصي: ${error.message}`,
+        error: `تعذر الاتصال بـ Supabase لجلب الملف الشخصي: ${error.message}`,
+        isConnectionError: true,
       };
     }
 
     if (!data) {
-      return { profile: null, isBanned: false, isSuspended: false, error: null };
+      return {
+        profile: null,
+        accountStatus: 'active',
+        isBanned: false,
+        isSuspended: false,
+        error: null,
+      };
     }
 
     const profile = data as DbProfile;
-    // التحقق من الحظر اعتمادًا حصريًا على is_blocked الفعلي أو حالة status
+    // التحقق من الحظر والتعليق اعتمادًا حصريًا على الأعمدة الفعلية: is_blocked و status
     const isBlocked =
       profile.is_blocked === true ||
       profile.status === 'blocked' ||
       profile.status === 'banned';
 
     const isSuspended =
-      profile.status === 'suspended' ||
-      profile.status === 'inactive';
+      !isBlocked &&
+      (profile.status === 'suspended' || profile.status === 'inactive');
+
+    const accountStatus: 'active' | 'banned' | 'suspended' = isBlocked
+      ? 'banned'
+      : isSuspended
+      ? 'suspended'
+      : 'active';
 
     return {
       profile,
+      accountStatus,
       isBanned: isBlocked,
       isSuspended,
       banReason: isBlocked
@@ -178,9 +201,11 @@ export async function fetchUserProfile(
   } catch (err: any) {
     return {
       profile: null,
+      accountStatus: 'active',
       isBanned: false,
       isSuspended: false,
       error: err?.message || 'فشل جلب ملف المستخدم بسبب انقطاع الاتصال.',
+      isConnectionError: true,
     };
   }
 }

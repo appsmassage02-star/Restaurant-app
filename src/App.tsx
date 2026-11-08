@@ -18,7 +18,7 @@ import { SettingsView } from './components/settings/SettingsView';
 import { ProfileView } from './components/profile/ProfileView';
 import { HelpView } from './components/help/HelpView';
 import { Order } from './types';
-import { Bell, X, ShoppingBag, Store, ShieldAlert, Loader2 } from 'lucide-react';
+import { Bell, X, ShoppingBag, Store, ShieldAlert, Loader2, WifiOff, RefreshCw } from 'lucide-react';
 
 const MainAppContent: React.FC = () => {
   const {
@@ -27,6 +27,8 @@ const MainAppContent: React.FC = () => {
     isUserBanned,
     isUserSuspended,
     banReason,
+    dataLoadError,
+    retryLoadUserData,
     hasRestaurant,
     restaurant,
     orders,
@@ -34,6 +36,8 @@ const MainAppContent: React.FC = () => {
     clearNewOrderAlert,
     logout,
   } = useApp();
+
+  const [isRetrying, setIsRetrying] = useState(false);
 
   // Navigation
   const [currentView, setCurrentView] = useState<string>('dashboard');
@@ -67,6 +71,15 @@ const MainAppContent: React.FC = () => {
     }
   };
 
+  const handleRetry = async () => {
+    setIsRetrying(true);
+    try {
+      await retryLoadUserData();
+    } finally {
+      setIsRetrying(false);
+    }
+  };
+
   // 1. Initial Loading State while checking Supabase Session
   if (authLoading) {
     return (
@@ -87,7 +100,54 @@ const MainAppContent: React.FC = () => {
     );
   }
 
-  // 2. Banned or Suspended User Guard
+  // 2. Network / Supabase Connection / Data Load Error State (Does not log out or treat as banned)
+  if (isAuthenticated && dataLoadError) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4 font-['Cairo',sans-serif]">
+        <div className="max-w-md w-full bg-white text-slate-900 rounded-3xl p-6 sm:p-8 text-center space-y-4 shadow-2xl border border-slate-100">
+          <div className="w-16 h-16 bg-amber-100 text-amber-700 rounded-2xl mx-auto flex items-center justify-center">
+            <WifiOff className="w-8 h-8" />
+          </div>
+          <h2 className="text-lg font-black text-slate-900">
+            تعذر الاتصال بقاعدة البيانات
+          </h2>
+          <p className="text-xs text-slate-600 leading-relaxed font-medium bg-slate-50 p-3 rounded-xl border border-slate-200 text-right dir-rtl">
+            {dataLoadError}
+          </p>
+          <p className="text-xs text-slate-500">
+            حدث خطأ أثناء جلب بيانات الملف الشخصي أو المطعم. يمكنك المحاولة مجددًا دون الحاجة لتسجيل الخروج.
+          </p>
+          <div className="pt-2 flex flex-col sm:flex-row gap-2 justify-center">
+            <button
+              onClick={handleRetry}
+              disabled={isRetrying}
+              className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-xs transition-colors flex items-center justify-center gap-2 cursor-pointer"
+            >
+              {isRetrying ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>جاري المحاولة...</span>
+                </>
+              ) : (
+                <>
+                  <RefreshCw className="w-4 h-4" />
+                  <span>إعادة المحاولة</span>
+                </>
+              )}
+            </button>
+            <button
+              onClick={logout}
+              className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+            >
+              تسجيل الخروج والعودة
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 3. Banned or Suspended User Guard
   if (isUserBanned || isUserSuspended) {
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4 font-['Cairo',sans-serif]">

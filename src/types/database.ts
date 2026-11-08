@@ -6,10 +6,8 @@
 export interface DbProfile {
   id: string; // auth.uid()
   full_name?: string | null;
-  name?: string | null;
   phone?: string | null;
   email?: string | null;
-  role?: string | null;
   is_blocked?: boolean | null;
   status?: string | null;
   created_at?: string | null;

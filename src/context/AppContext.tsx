@@ -130,6 +130,8 @@ interface AppContextType {
   resetPassword: (email: string) => Promise<AuthResult>;
   logout: () => Promise<void>;
   refreshRestaurant: () => Promise<void>;
+  dataLoadError: string | null;
+  retryLoadUserData: () => Promise<void>;
 
   // Profile & Restaurant Updates
   updateOwner: (updated: Partial<RestaurantOwner>) => void;
@@ -223,6 +225,7 @@ interface AppContextType {
   stats: {
     pendingOrdersCount: number;
     acceptedOrdersCount: number;
+    awaitingDriverOrdersCount: number;
     preparingOrdersCount: number;
     readyOrdersCount: number;
     completedOrdersCount: number;
@@ -249,6 +252,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [isUserBanned, setIsUserBanned] = useState<boolean>(false);
   const [isUserSuspended, setIsUserSuspended] = useState<boolean>(false);
   const [banReason, setBanReason] = useState<string | undefined>(undefined);
+  const [dataLoadError, setDataLoadError] = useState<string | null>(null);
 
   // Real owned restaurant state
   const [dbRestaurant, setDbRestaurant] = useState<DbRestaurant | null>(null);
@@ -471,16 +475,32 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Load User Data and Owned Restaurant from Supabase
   const loadUserData = useCallback(
     async (authUser: User) => {
+      setDataLoadError(null);
+
       // 1. Fetch Profile
       const profResult = await fetchUserProfile(authUser.id);
+      if (profResult.isConnectionError) {
+        setDataLoadError(
+          profResult.error || 'تعذر الاتصال بـ Supabase لجلب الملف الشخصي. يرجى التحقق من الشبكة.'
+        );
+        return;
+      }
+
       setUserProfile(profResult.profile);
       setIsUserBanned(profResult.isBanned);
       setIsUserSuspended(profResult.isSuspended);
       setBanReason(profResult.banReason);
 
+      if (profResult.isBanned || profResult.isSuspended) {
+        setDbRestaurant(null);
+        setCategories([]);
+        setMenuItems([]);
+        setOffers([]);
+        return;
+      }
+
       const ownerName =
         profResult.profile?.full_name ||
-        profResult.profile?.name ||
         authUser.user_metadata?.full_name ||
         authUser.user_metadata?.name ||
         authUser.email?.split('@')[0] ||
@@ -499,6 +519,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       // 2. Fetch Restaurant owned by this user
       const restResult = await fetchOwnerRestaurant(authUser.id);
+      if (restResult.error) {
+        setDataLoadError(restResult.error);
+        return;
+      }
+
       if (restResult.restaurant) {
         setDbRestaurant(restResult.restaurant);
         const mapped = mapDbRestaurantToProfile(
@@ -527,6 +552,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     [mapDbRestaurantToProfile, loadMenuData, loadOffersData]
   );
 
+  const retryLoadUserData = useCallback(async () => {
+    setDataLoadError(null);
+    if (user) {
+      setAuthLoading(true);
+      await loadUserData(user);
+      setAuthLoading(false);
+    }
+  }, [user, loadUserData]);
+
   // Initialize and listen to Supabase Auth session
   useEffect(() => {
     let isMounted = true;
@@ -542,6 +576,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const { data, error } = await supabase.auth.getSession();
         if (error) {
           console.error('Error getting Supabase session:', error);
+          if (isMounted) {
+            setDataLoadError('فشل استعادة جلسة المستخدم من Supabase. يرجى التحقق من الاتصال.');
+          }
         }
 
         if (isMounted) {
@@ -557,8 +594,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             setOwner(EMPTY_OWNER);
           }
         }
-      } catch (err) {
+      } catch (err: any) {
         console.error('Failed to init auth session:', err);
+        if (isMounted) {
+          setDataLoadError(err?.message || 'تعذر استعادة جلسة المستخدم من Supabase.');
+        }
       } finally {
         if (isMounted) {
           setAuthLoading(false);
@@ -574,6 +614,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     } = supabase.auth.onAuthStateChange(async (event, newSession) => {
       if (!isMounted) return;
 
+      // Ignore INITIAL_SESSION event because initAuth() already handles initial getSession()
+      if (event === 'INITIAL_SESSION') {
+        return;
+      }
+
+      // If token refreshed, just update session & user without resetting full state or reloading
+      if (event === 'TOKEN_REFRESHED') {
+        setSession(newSession);
+        setUser(newSession?.user || null);
+        return;
+      }
+
       setSession(newSession);
       setUser(newSession?.user || null);
 
@@ -585,6 +637,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setDbRestaurant(null);
         setRestaurant(EMPTY_RESTAURANT);
         setOwner(EMPTY_OWNER);
+        setDataLoadError(null);
         setAuthLoading(false);
       }
     });
@@ -792,6 +845,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (res.error) {
       return { success: false, error: res.error };
     }
+
+    setDbRestaurant((prev) => (prev ? { ...prev, ...updates } : prev));
 
     setRestaurant((prev) => ({
       ...prev,
@@ -1245,6 +1300,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // Stats
   const pendingOrdersCount = orders.filter((o) => o.status === 'PENDING').length;
   const acceptedOrdersCount = orders.filter((o) => o.status === 'ACCEPTED').length;
+  const awaitingDriverOrdersCount = orders.filter((o) => o.status === 'AWAITING_DRIVER').length;
   const preparingOrdersCount = orders.filter((o) => o.status === 'PREPARING').length;
   const readyOrdersCount = orders.filter((o) => o.status === 'READY').length;
   const completedOrdersCount = orders.filter((o) => o.status === 'COMPLETED').length;
@@ -1268,6 +1324,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const stats = {
     pendingOrdersCount,
     acceptedOrdersCount,
+    awaitingDriverOrdersCount,
     preparingOrdersCount,
     readyOrdersCount,
     completedOrdersCount,
@@ -1303,6 +1360,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         resetPassword,
         logout,
         refreshRestaurant,
+        dataLoadError,
+        retryLoadUserData,
         updateOwner,
         updateRestaurant,
         updateRestaurantSettingsDb,
