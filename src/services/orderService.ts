@@ -13,8 +13,16 @@ import {
   DbRestaurantOrder,
   DbRestaurantOrderItem,
   DbRestaurantOrderStatusHistory,
+  DbRestaurantDeliveryOrder,
 } from '../types/database';
-import { Order, OrderItem, OrderStatus, OrderStatusHistory, ExecutionRoute } from '../types';
+import {
+  Order,
+  OrderItem,
+  OrderStatus,
+  OrderStatusHistory,
+  ExecutionRoute,
+  DriverInfo,
+} from '../types';
 
 export interface OrdersFetchResult {
   orders: Order[];
@@ -152,7 +160,9 @@ export function getArabicRouteLabel(route: string | ExecutionRoute): string {
 export function mapDbOrderToAppOrder(
   dbOrder: DbRestaurantOrder,
   orderItems: DbRestaurantOrderItem[] = [],
-  statusHistory: DbRestaurantOrderStatusHistory[] = []
+  statusHistory: DbRestaurantOrderStatusHistory[] = [],
+  deliveryOrder?: DbRestaurantDeliveryOrder | null,
+  driverProfile?: { full_name?: string | null; phone?: string | null } | null
 ): Order {
   const foodSubtotal = Number(dbOrder.food_subtotal) || 0;
   const discountTotal = Number(dbOrder.discount_amount) || 0;
@@ -211,6 +221,50 @@ export function mapDbOrderToAppOrder(
     updatedBy: h.changed_by || 'نظام طلبات البيت',
   }));
 
+  // استخلاص بيانات السائق عند وجود أمر توصيل
+  let driverInfo: DriverInfo | undefined = undefined;
+  if (deliveryOrder && (deliveryOrder.driver_user_id || deliveryOrder.assigned_at)) {
+    driverInfo = {
+      id: deliveryOrder.driver_user_id || undefined,
+      name: driverProfile?.full_name || 'كابتن المنظومة',
+      phone: driverProfile?.phone || '',
+      assignedAt: deliveryOrder.assigned_at || undefined,
+      pickedUpAt: deliveryOrder.picked_up_at || undefined,
+      deliveredAt: deliveryOrder.delivered_at || undefined,
+      status: deliveryOrder.status,
+    };
+  }
+
+  // تسوية الحالة الفعلية مع الأخذ بالاعتبار حالة التوصيل في restaurant_delivery_orders
+  let resolvedStatus = mapDbStatusToOrderStatus(dbOrder.status, dbOrder.fulfillment_route);
+  const dbStatusLower = (dbOrder.status || '').toLowerCase().trim();
+
+  if (dbOrder.fulfillment_route === 'driver_delivery') {
+    const delivStatus = (deliveryOrder?.status || '').toLowerCase().trim();
+    if (delivStatus === 'picked_up' || deliveryOrder?.picked_up_at) {
+      resolvedStatus = 'PICKED_UP';
+    } else if (delivStatus === 'on_the_way') {
+      resolvedStatus = 'ON_THE_WAY';
+    } else if (delivStatus === 'delivered' || deliveryOrder?.delivered_at) {
+      resolvedStatus = 'DELIVERED';
+    } else if (delivStatus === 'completed') {
+      resolvedStatus = 'COMPLETED';
+    } else if (
+      delivStatus === 'assigned' ||
+      delivStatus === 'driver_assigned' ||
+      deliveryOrder?.driver_user_id ||
+      deliveryOrder?.assigned_at
+    ) {
+      if (
+        dbStatusLower === 'accepted' ||
+        dbStatusLower === 'awaiting_driver' ||
+        dbStatusLower === 'pending'
+      ) {
+        resolvedStatus = 'ASSIGNED_TO_DRIVER';
+      }
+    }
+  }
+
   const governorate =
     dbOrder.delivery_governorate_name_snapshot || 'غير محدد';
   const center =
@@ -240,7 +294,7 @@ export function mapDbOrderToAppOrder(
     paymentMethod: dbOrder.payment_method || 'CASH_ON_DELIVERY',
     route: mapDbRouteToExecutionRoute(dbOrder.fulfillment_route),
     rawRoute: dbOrder.fulfillment_route,
-    status: mapDbStatusToOrderStatus(dbOrder.status, dbOrder.fulfillment_route),
+    status: resolvedStatus,
     rawStatus: dbOrder.status,
     rejectionReason: dbOrder.cancellation_reason || undefined,
     statusHistory: history,
@@ -254,6 +308,8 @@ export function mapDbOrderToAppOrder(
     deliveryGovernorateSnapshot: dbOrder.delivery_governorate_name_snapshot || undefined,
     deliveryCenterSnapshot: dbOrder.delivery_center_name_snapshot || undefined,
     deliveryAreaSnapshot: dbOrder.delivery_area_name_snapshot || undefined,
+    driverInfo,
+    deliveryOrder: deliveryOrder || undefined,
   };
 }
 
@@ -354,11 +410,54 @@ export async function fetchRestaurantOrders(
       });
     }
 
-    // 4. دمج البيانات وبناء كائنات الطلبات
+    // 4. جلب أوامر التوصيل وسجلات السائقين لطلبات دليفري طلباتي
+    let deliveryOrdersMap: Record<string, DbRestaurantDeliveryOrder> = {};
+    let driverUserIds: string[] = [];
+
+    try {
+      const { data: deliveryData, error: deliveryError } = await supabase
+        .from('restaurant_delivery_orders')
+        .select('*')
+        .in('order_id', orderIds);
+
+      if (!deliveryError && deliveryData) {
+        (deliveryData as DbRestaurantDeliveryOrder[]).forEach((d) => {
+          deliveryOrdersMap[d.order_id] = d;
+          if (d.driver_user_id && !driverUserIds.includes(d.driver_user_id)) {
+            driverUserIds.push(d.driver_user_id);
+          }
+        });
+      }
+    } catch (delivErr) {
+      console.warn('Could not fetch restaurant_delivery_orders (non-fatal):', delivErr);
+    }
+
+    // 5. جلب بيانات السائقين (الاسم ورقم الهاتف) من جدول profiles
+    let driverProfilesMap: Record<string, { full_name?: string | null; phone?: string | null }> = {};
+    if (driverUserIds.length > 0) {
+      try {
+        const { data: profilesData } = await supabase
+          .from('profiles')
+          .select('id, full_name, phone')
+          .in('id', driverUserIds);
+
+        if (profilesData) {
+          profilesData.forEach((p: any) => {
+            driverProfilesMap[p.id] = { full_name: p.full_name, phone: p.phone };
+          });
+        }
+      } catch (profErr) {
+        console.warn('Could not fetch driver profiles (non-fatal):', profErr);
+      }
+    }
+
+    // 6. دمج البيانات وبناء كائنات الطلبات
     const parsedOrders: Order[] = orderRows.map((dbOrder) => {
       const ordItems = itemsMap[dbOrder.id] || [];
       const ordHist = historyMap[dbOrder.id] || [];
-      return mapDbOrderToAppOrder(dbOrder, ordItems, ordHist);
+      const delivOrder = deliveryOrdersMap[dbOrder.id] || null;
+      const driverProf = delivOrder?.driver_user_id ? driverProfilesMap[delivOrder.driver_user_id] : null;
+      return mapDbOrderToAppOrder(dbOrder, ordItems, ordHist, delivOrder, driverProf);
     });
 
     return {
@@ -375,7 +474,7 @@ export async function fetchRestaurantOrders(
 }
 
 /**
- * جلب تفاصيل طلب مفرد بالكامل مع أصنافه وسجل حالاته
+ * جلب تفاصيل طلب مفرد بالكامل مع أصنافه وسجل حالاته وبيانات التوصيل
  */
 export async function fetchOrderDetails(
   orderId: string
@@ -399,13 +498,18 @@ export async function fetchOrderDetails(
       return { order: null, error: 'الطلب غير موجود في قاعدة البيانات.' };
     }
 
-    const [itemsRes, histRes] = await Promise.all([
+    const [itemsRes, histRes, delivRes] = await Promise.all([
       supabase.from('restaurant_order_items').select('*').eq('order_id', orderId),
       supabase
         .from('restaurant_order_status_history')
         .select('*')
         .eq('order_id', orderId)
         .order('created_at', { ascending: true }),
+      supabase
+        .from('restaurant_delivery_orders')
+        .select('*')
+        .eq('order_id', orderId)
+        .maybeSingle(),
     ]);
 
     if (itemsRes.error) {
@@ -415,10 +519,29 @@ export async function fetchOrderDetails(
       return { order: null, error: `فشل جلب سجل حالات الطلب: ${histRes.error.message}` };
     }
 
+    const delivOrder = (delivRes.data as DbRestaurantDeliveryOrder) || null;
+    let driverProf: { full_name?: string | null; phone?: string | null } | null = null;
+    if (delivOrder?.driver_user_id) {
+      try {
+        const { data: prof } = await supabase
+          .from('profiles')
+          .select('id, full_name, phone')
+          .eq('id', delivOrder.driver_user_id)
+          .maybeSingle();
+        if (prof) {
+          driverProf = { full_name: prof.full_name, phone: prof.phone };
+        }
+      } catch (pErr) {
+        console.warn('Could not fetch driver profile for single order:', pErr);
+      }
+    }
+
     const order = mapDbOrderToAppOrder(
       orderData as DbRestaurantOrder,
       (itemsRes.data as DbRestaurantOrderItem[]) || [],
-      (histRes.data as DbRestaurantOrderStatusHistory[]) || []
+      (histRes.data as DbRestaurantOrderStatusHistory[]) || [],
+      delivOrder,
+      driverProf
     );
 
     return { order, error: null };

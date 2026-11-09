@@ -1,4 +1,8 @@
-import { DbOrderWorkflowItem, DbPendingCancellation } from './database';
+import {
+  DbOrderWorkflowItem,
+  DbPendingCancellation,
+  DbRestaurantDeliveryOrder,
+} from './database';
 
 export type ExecutionRoute = 'SELF_DELIVERY' | 'COURIER_PHONE';
 
@@ -123,6 +127,16 @@ export interface CustomerInfo {
   notes?: string;
 }
 
+export interface DriverInfo {
+  id?: string;
+  name: string;
+  phone: string;
+  assignedAt?: string;
+  pickedUpAt?: string;
+  deliveredAt?: string;
+  status?: string;
+}
+
 export interface Order {
   id: string;
   orderNumber: string;
@@ -153,6 +167,8 @@ export interface Order {
   deliveryAreaSnapshot?: string;
   workflowItems?: DbOrderWorkflowItem[];
   pendingCancellation?: DbPendingCancellation | null;
+  driverInfo?: DriverInfo;
+  deliveryOrder?: DbRestaurantDeliveryOrder;
   phoneCourierCallLog?: {
     courierName: string;
     courierPhone: string;

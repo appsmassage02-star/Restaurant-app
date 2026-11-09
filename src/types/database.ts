@@ -193,14 +193,39 @@ export interface DbOrderWorkflowItem {
   customer_approved_quantity?: number | null;
 }
 
+export interface DbRestaurantDeliveryOrder {
+  id: string; // uuid
+  order_id: string; // uuid
+  driver_user_id?: string | null; // uuid
+  status: string; // pending, assigned, picked_up, on_the_way, delivered, cancelled
+  created_at: string;
+  updated_at: string;
+  assigned_at?: string | null;
+  picked_up_at?: string | null;
+  delivered_at?: string | null;
+}
+
+export interface DbRestaurantOrderCancellationRequest {
+  id: string; // uuid
+  order_id: string; // uuid
+  requested_by?: string | null;
+  reason: string;
+  status: string; // pending, approved, rejected
+  decision_reason?: string | null;
+  decided_by?: string | null;
+  decided_at?: string | null;
+  created_at: string;
+  updated_at?: string | null;
+}
+
 export interface DbPendingCancellation {
   id: string;
   order_id: string;
   order_number?: string | number;
   customer_name?: string;
+  requested_by?: string | null;
+  requested_by_role?: 'customer' | 'driver' | 'restaurant' | string;
   reason: string;
   created_at: string;
   status?: string;
 }
-
-

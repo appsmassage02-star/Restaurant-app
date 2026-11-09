@@ -177,7 +177,31 @@ export class OrderRealtimeManager {
             filter: `restaurant_id=eq.${restaurantId}`,
           },
           () => {
-            // استقبال حدث فوري: نطلب جلب موثوق للطلب مع أصنافه وسجل حالاته
+            // استقبال حدث فوري في جدول طلبات المطعم
+            this.triggerSync();
+          }
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'restaurant_delivery_orders',
+          },
+          () => {
+            // استقبال حدث فوري في جدول أوامر التوصيل وحالات السائقين
+            this.triggerSync();
+          }
+        )
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'restaurant_order_cancellation_requests',
+          },
+          () => {
+            // استقبال حدث فوري عند ورود أو تحديث طلبات الإلغاء
             this.triggerSync();
           }
         )
