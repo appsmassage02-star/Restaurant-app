@@ -253,7 +253,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [isUserSuspended, setIsUserSuspended] = useState<boolean>(false);
   const [banReason, setBanReason] = useState<string | undefined>(undefined);
   const [dataLoadError, setDataLoadError] = useState<string | null>(null);
-  const isRetryingRef = useRef<boolean>(false);
+
+  // تنسيق موحد لعمليات تحميل بيانات المستخدم لمنع التداخل والتضارب بين مسارات الدخول واستعادة الجلسة وإعادة المحاولة
+  const activeLoadPromiseRef = useRef<Promise<void> | null>(null);
+  const activeUserIdRef = useRef<string | null>(null);
+  const loadSequenceRef = useRef<number>(0);
 
   // Real owned restaurant state
   const [dbRestaurant, setDbRestaurant] = useState<DbRestaurant | null>(null);
@@ -473,115 +477,158 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     []
   );
 
-  // Load User Data and Owned Restaurant from Supabase
-  const loadUserData = useCallback(
-    async (authUser: User) => {
+  // التنفيذ الفعلي لعملية جلب بيانات المستخدم والمطعم
+  const executeLoadUserData = useCallback(
+    async (authUser: User, sequence: number) => {
+      // إهمال العملية فورًا إذا بدأ تسلسل أحدث لمستخدم آخر
+      if (sequence !== loadSequenceRef.current) return;
+
       setDataLoadError(null);
 
-      try {
-        // 1. Fetch Profile
-        const profResult = await fetchUserProfile(authUser.id);
-        if (profResult.error) {
-          setDataLoadError(profResult.error);
-          return;
-        }
+      // 1. Fetch Profile
+      const profResult = await fetchUserProfile(authUser.id);
+      if (sequence !== loadSequenceRef.current) return;
 
-        setUserProfile(profResult.profile);
-        setIsUserBanned(profResult.isBanned);
-        setIsUserSuspended(profResult.isSuspended);
-        setBanReason(profResult.banReason);
+      if (profResult.error) {
+        setDataLoadError(profResult.error);
+        return;
+      }
 
-        if (profResult.isBanned || profResult.isSuspended) {
-          setDbRestaurant(null);
-          setCategories([]);
-          setMenuItems([]);
-          setOffers([]);
-          return;
-        }
+      setUserProfile(profResult.profile);
+      setIsUserBanned(profResult.isBanned);
+      setIsUserSuspended(profResult.isSuspended);
+      setBanReason(profResult.banReason);
 
-        const ownerName =
-          profResult.profile?.full_name ||
-          authUser.user_metadata?.full_name ||
-          authUser.user_metadata?.name ||
-          authUser.email?.split('@')[0] ||
-          'مالك المطعم';
+      if (profResult.isBanned || profResult.isSuspended) {
+        setDbRestaurant(null);
+        setCategories([]);
+        setMenuItems([]);
+        setOffers([]);
+        return;
+      }
 
-        const ownerPhone =
-          profResult.profile?.phone || authUser.user_metadata?.phone || '';
+      const ownerName =
+        profResult.profile?.full_name ||
+        authUser.user_metadata?.full_name ||
+        authUser.user_metadata?.name ||
+        authUser.email?.split('@')[0] ||
+        'مالك المطعم';
 
-        const ownerObj: RestaurantOwner = {
-          id: authUser.id,
-          fullName: ownerName,
-          phone: ownerPhone,
-          email: authUser.email || '',
-        };
-        setOwner(ownerObj);
+      const ownerPhone =
+        profResult.profile?.phone || authUser.user_metadata?.phone || '';
 
-        // 2. Fetch Restaurant owned by this user
-        const restResult = await fetchOwnerRestaurant(authUser.id);
-        if (restResult.error) {
-          setDataLoadError(restResult.error);
-          return;
-        }
+      const ownerObj: RestaurantOwner = {
+        id: authUser.id,
+        fullName: ownerName,
+        phone: ownerPhone,
+        email: authUser.email || '',
+      };
+      setOwner(ownerObj);
 
-        if (restResult.restaurant) {
-          setDbRestaurant(restResult.restaurant);
-          const mapped = mapDbRestaurantToProfile(
-            restResult.restaurant,
-            authUser.email || '',
-            ownerName
-          );
-          setRestaurant(mapped);
+      // 2. Fetch Restaurant owned by this user
+      const restResult = await fetchOwnerRestaurant(authUser.id);
+      if (sequence !== loadSequenceRef.current) return;
 
-          // تحميل أقسام وأصناف وعروض المطعم الحقيقي من جداول Supabase الفعلية
-          await Promise.all([
-            loadMenuData(restResult.restaurant.id),
-            loadOffersData(restResult.restaurant.id),
-          ]);
-        } else {
-          setDbRestaurant(null);
-          setRestaurant({
-            ...EMPTY_RESTAURANT,
-            registrationStatus: 'NOT_REGISTERED',
-          });
-          setCategories([]);
-          setMenuItems([]);
-          setOffers([]);
-        }
-      } catch (err: any) {
-        console.error('Unhandled error in loadUserData:', err);
-        setDataLoadError(err?.message || 'حدث استثناء غير متوقع أثناء تحميل بيانات الحساب والمطعم.');
+      if (restResult.error) {
+        setDataLoadError(restResult.error);
+        return;
+      }
+
+      if (restResult.restaurant) {
+        setDbRestaurant(restResult.restaurant);
+        const mapped = mapDbRestaurantToProfile(
+          restResult.restaurant,
+          authUser.email || '',
+          ownerName
+        );
+        if (sequence !== loadSequenceRef.current) return;
+        setRestaurant(mapped);
+
+        // تحميل أقسام وأصناف وعروض المطعم الحقيقي من جداول Supabase الفعلية
+        await Promise.all([
+          loadMenuData(restResult.restaurant.id),
+          loadOffersData(restResult.restaurant.id),
+        ]);
+      } else {
+        setDbRestaurant(null);
+        setRestaurant({
+          ...EMPTY_RESTAURANT,
+          registrationStatus: 'NOT_REGISTERED',
+        });
+        setCategories([]);
+        setMenuItems([]);
+        setOffers([]);
       }
     },
     [mapDbRestaurantToProfile, loadMenuData, loadOffersData]
   );
 
+  /**
+   * المنسق المشترك الموحد لجميع مسارات تحميل بيانات المستخدم:
+   * 1. يمنع تشغيل تحميلين متزامنين لنفس المستخدم (يعيد الوعد الجاري بأمان)
+   * 2. يدعم التبديل الفوري إذا تغير المستخدم بجلسة أحدث
+   * 3. يمنع نتيجة قديمة من استبدال بيانات جلسة مستخدم أحدث عبر loadSequenceRef
+   * 4. يضمن عودة authLoading إلى false وإلغاء القفل في جميع حالات النجاح والفشل والاستثناءات
+   */
+  const coordinateLoadUserData = useCallback(
+    async (authUser: User): Promise<void> => {
+      if (!authUser?.id) {
+        setAuthLoading(false);
+        return;
+      }
+
+      // إذا كان تحميل نفس المستخدم جاريًا بالفعل، نتعامل مع العملية الجارية بأمان دون تكرار
+      if (
+        activeUserIdRef.current === authUser.id &&
+        activeLoadPromiseRef.current
+      ) {
+        try {
+          await activeLoadPromiseRef.current;
+        } catch {
+          // الخطأ يعالج داخل الوعد النشط
+        }
+        return;
+      }
+
+      // زيادة رقم التسلسل لإبطال أي عمليات أقدم إذا تغير المستخدم
+      const thisSequence = ++loadSequenceRef.current;
+      activeUserIdRef.current = authUser.id;
+      setAuthLoading(true);
+
+      const promise = (async () => {
+        try {
+          await executeLoadUserData(authUser, thisSequence);
+        } catch (err: any) {
+          if (thisSequence === loadSequenceRef.current) {
+            console.error('Unhandled error in coordinateLoadUserData:', err);
+            setDataLoadError(
+              err?.message || 'حدث استثناء غير متوقع أثناء تحميل بيانات الحساب والمطعم.'
+            );
+          }
+        } finally {
+          // ضمان إنهاء حالة التحميل وتحرير القفل حتمًا لجميع المسارات
+          if (thisSequence === loadSequenceRef.current) {
+            setAuthLoading(false);
+            activeLoadPromiseRef.current = null;
+            activeUserIdRef.current = null;
+          }
+        }
+      })();
+
+      activeLoadPromiseRef.current = promise;
+      await promise;
+    },
+    [executeLoadUserData]
+  );
+
   const retryLoadUserData = useCallback(async () => {
-    // منع تداخل محاولات إعادة التحميل إذا كان هناك تحميل جارٍ بالفعل
-    if (isRetryingRef.current) {
-      return;
-    }
-
-    if (!user) {
-      setAuthLoading(false);
-      return;
-    }
-
-    isRetryingRef.current = true;
     setDataLoadError(null);
-    setAuthLoading(true);
-
-    try {
-      await loadUserData(user);
-    } catch (err: any) {
-      console.error('Exception during retryLoadUserData:', err);
-      setDataLoadError(err?.message || 'حدث استثناء أثناء إعادة محاولة تحميل البيانات.');
-    } finally {
-      // ضمان إنهاء حالة التحميل وعودة authLoading إلى false في كافة الحالات
+    if (user) {
+      await coordinateLoadUserData(user);
+    } else {
       setAuthLoading(false);
-      isRetryingRef.current = false;
     }
-  }, [user, loadUserData]);
+  }, [user, coordinateLoadUserData]);
 
   // Initialize and listen to Supabase Auth session
   useEffect(() => {
@@ -609,11 +656,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           setUser(currentSession?.user || null);
 
           if (currentSession?.user) {
-            await loadUserData(currentSession.user);
+            await coordinateLoadUserData(currentSession.user);
           } else {
             setDbRestaurant(null);
             setRestaurant(EMPTY_RESTAURANT);
             setOwner(EMPTY_OWNER);
+            setAuthLoading(false);
           }
         }
       } catch (err: any) {
@@ -622,7 +670,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           setDataLoadError(err?.message || 'تعذر استعادة جلسة المستخدم من Supabase.');
         }
       } finally {
-        if (isMounted) {
+        if (isMounted && !activeLoadPromiseRef.current) {
           setAuthLoading(false);
         }
       }
@@ -652,10 +700,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setUser(newSession?.user || null);
 
       if (newSession?.user) {
-        setAuthLoading(true);
-        await loadUserData(newSession.user);
-        setAuthLoading(false);
+        await coordinateLoadUserData(newSession.user);
       } else {
+        loadSequenceRef.current++;
+        activeLoadPromiseRef.current = null;
+        activeUserIdRef.current = null;
         setDbRestaurant(null);
         setRestaurant(EMPTY_RESTAURANT);
         setOwner(EMPTY_OWNER);
@@ -668,7 +717,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       isMounted = false;
       subscription.unsubscribe();
     };
-  }, [loadUserData]);
+  }, [coordinateLoadUserData]);
 
   // Auth Operations
   const login = async (email: string, pass: string): Promise<AuthResult> => {
@@ -694,8 +743,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         return { success: false, error: 'لم يتم العثور على بيانات المستخدم.' };
       }
 
-      // Session will be updated by onAuthStateChange, but we also proactively load data
-      await loadUserData(data.user);
+      // Session will be updated by onAuthStateChange, and coordinateLoadUserData ensures only one load runs
+      await coordinateLoadUserData(data.user);
       return { success: true };
     } catch (err: any) {
       return { success: false, error: translateAuthError(err?.message || 'فشل الاتصال') };
@@ -741,7 +790,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
 
       if (data.user) {
-        await loadUserData(data.user);
+        await coordinateLoadUserData(data.user);
       }
 
       return { success: true };
@@ -771,6 +820,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const logout = async () => {
+    loadSequenceRef.current++;
+    activeLoadPromiseRef.current = null;
+    activeUserIdRef.current = null;
     if (isSupabaseConfigured) {
       try {
         await supabase.auth.signOut();
@@ -794,11 +846,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setOrdersRealtimeStatus('DISCONNECTED');
     setMovements([]);
     setNotifications([]);
+    setDataLoadError(null);
+    setAuthLoading(false);
   };
 
   const refreshRestaurant = async () => {
     if (user) {
-      await loadUserData(user);
+      await coordinateLoadUserData(user);
     }
   };
 
@@ -808,7 +862,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   ): Promise<CreateRestaurantResult> => {
     const result = await attemptCreateRestaurant(payload);
     if (result.success && result.restaurant && user) {
-      await loadUserData(user);
+      await coordinateLoadUserData(user);
     }
     return result;
   };

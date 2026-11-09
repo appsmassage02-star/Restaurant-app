@@ -14,7 +14,7 @@ export interface RestaurantFetchResult {
   error: string | null;
 }
 
-export type SupabaseErrorCategory = 'connection' | 'permission' | 'schema' | 'unknown';
+export type SupabaseErrorCategory = 'connection' | 'auth' | 'permission' | 'schema' | 'unknown';
 
 export interface ProfileFetchResult {
   profile: DbProfile | null;
@@ -133,17 +133,18 @@ export interface ClassifiedSupabaseError {
 }
 
 /**
- * تصنيف أخطاء Supabase بدقة:
- * - خطأ اتصال / شبكة / مهلة (isConnectionError = true)
- * - خطأ صلاحيات أو RLS (isConnectionError = false)
- * - خطأ مخطط أو صيغة استعلام (isConnectionError = false)
- * - أخطاء أخرى غير معروفة (isConnectionError = false)
+ * تصنيف أخطاء Supabase بدقة وفق أكواد PostgREST وPostgreSQL الفعلية:
+ * 1. خطأ اتصال / شبكة / مهلة (isConnectionError = true)
+ * 2. خطأ مصادقة وجلسة JWT (isConnectionError = false)
+ * 3. خطأ صلاحيات أو RLS (isConnectionError = false)
+ * 4. خطأ مخطط أو صيغة استعلام (isConnectionError = false)
+ * 5. أخطاء أخرى غير معروفة (isConnectionError = false)
  */
 export function classifySupabaseError(error: any): ClassifiedSupabaseError {
   if (!error) {
     return {
       category: 'unknown',
-      userMessage: 'حدث خطأ غير معروف.',
+      userMessage: 'حدث خطأ غير معروف أثناء قراءة البيانات.',
       isConnectionError: false,
     };
   }
@@ -152,21 +153,18 @@ export function classifySupabaseError(error: any): ClassifiedSupabaseError {
   const code = String(error?.code || '').toUpperCase();
   const details = String(error?.details || '').toLowerCase();
 
-  // 1. Connection / Network / Timeout errors
+  // 1. Connection / Network / Timeout errors (تقتصر فقط على الأخطاء المثبتة لانقطاع الشبكة)
   const isConnection =
     message.includes('failed to fetch') ||
-    message.includes('networkerror') ||
     message.includes('network error') ||
+    message.includes('networkerror') ||
     message.includes('fetch failed') ||
-    message.includes('timeout') ||
-    message.includes('timed out') ||
-    message.includes('abort') ||
-    message.includes('econnrefused') ||
-    message.includes('connection refused') ||
+    message.includes('net::err_') ||
     message.includes('offline') ||
     code === 'ETIMEDOUT' ||
     code === 'ECONNREFUSED' ||
     code === 'ECONNABORTED' ||
+    code === 'ENOTFOUND' ||
     code === 'FETCH_ERROR';
 
   if (isConnection) {
@@ -178,49 +176,78 @@ export function classifySupabaseError(error: any): ClassifiedSupabaseError {
     };
   }
 
-  // 2. Permission / RLS / Auth errors
+  // 2. Authentication & Session (JWT) errors (مفصولة تمامًا عن الصلاحيات والـ RLS)
+  const isAuthError =
+    code === 'PGRST300' || // JWT invalid
+    code === 'PGRST301' || // JWT expired
+    code === 'PGRST302' || // JWT secret is missing
+    code === 'PGRST303' || // JWT claim is invalid / missing
+    code === 'INVALID_JWT' ||
+    message.includes('jwt expired') ||
+    message.includes('jwt is expired') ||
+    message.includes('invalid jwt') ||
+    message.includes('jwt invalid') ||
+    message.includes('jwt malformed') ||
+    message.includes('token is expired') ||
+    message.includes('invalid claim');
+
+  if (isAuthError) {
+    return {
+      category: 'auth',
+      userMessage: 'انتهت صلاحية جلسة تسجيل الدخول أو الرمز غير صالح (JWT). يرجى إعادة تسجيل الدخول.',
+      isConnectionError: false,
+      code,
+    };
+  }
+
+  // 3. Permission & Row-Level Security (RLS) errors
   const isPermission =
     code === '42501' || // PostgreSQL insufficient_privilege
-    code === 'PGRST301' || // PostgREST JWT expired
     message.includes('permission denied') ||
     message.includes('row-level security') ||
-    message.includes('not authorized') ||
-    message.includes('jwt') ||
-    details.includes('permission') ||
+    message.includes('violates row-level security policy') ||
+    details.includes('permission denied') ||
     details.includes('row-level security');
 
   if (isPermission) {
     return {
       category: 'permission',
-      userMessage: 'لا تملك الصلاحية الكافية لقراءة بيانات الملف الشخصي (قيود الوصول RLS).',
+      userMessage: 'لا تملك الصلاحية الكافية لقراءة بيانات هذا السجل (قيود الوصول RLS).',
       isConnectionError: false,
       code,
     };
   }
 
-  // 3. Schema / Query / Syntax errors
+  // 4. Schema & Query errors (أكواد PostgREST وPostgreSQL المثبتة فقط دون استخدام بادئات عشوائية)
   const isSchema =
-    code === '42703' || // undefined_column
-    code === '42P01' || // undefined_table
-    code.startsWith('PGRST1') ||
-    code.startsWith('PGRST2') ||
-    message.includes('column') ||
-    message.includes('relation') ||
+    code === '42703' || // PostgreSQL undefined_column
+    code === '42P01' || // PostgreSQL undefined_table
+    code === '42883' || // PostgreSQL undefined_function
+    code === '42601' || // PostgreSQL syntax_error
+    code === 'PGRST100' || // PostgREST syntax error in query
+    code === 'PGRST102' || // PostgREST invalid request body
+    code === 'PGRST103' || // PostgREST invalid range
+    code === 'PGRST105' || // PostgREST invalid order by
+    code === 'PGRST106' || // PostgREST schema cache reload error
+    code === 'PGRST200' || // PostgREST relationship not found
+    code === 'PGRST204' || // PostgREST column not found
+    (message.includes('does not exist') &&
+      (message.includes('column') || message.includes('relation') || message.includes('table'))) ||
     message.includes('syntax error');
 
   if (isSchema) {
     return {
       category: 'schema',
-      userMessage: 'خطأ في استعلام بيانات الملف الشخصي بقاعدة البيانات.',
+      userMessage: 'خطأ في استعلام بيانات الملف الشخصي بقاعدة البيانات (حقل أو جدول غير مطابق).',
       isConnectionError: false,
       code,
     };
   }
 
-  // 4. Other / Unknown errors
+  // 5. Other / Unknown errors (لا تُعتبر خطأ اتصال ولا تدل على حظر الحساب)
   return {
     category: 'unknown',
-    userMessage: error?.message || 'حدث خطأ أثناء قراءة بيانات الملف الشخصي.',
+    userMessage: error?.message || 'حدث خطأ غير متوقع أثناء قراءة بيانات الملف الشخصي.',
     isConnectionError: false,
     code,
   };
