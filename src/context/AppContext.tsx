@@ -257,7 +257,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // تنسيق موحد لعمليات تحميل بيانات المستخدم لمنع التداخل والتضارب بين مسارات الدخول واستعادة الجلسة وإعادة المحاولة
   const activeLoadPromiseRef = useRef<Promise<void> | null>(null);
   const activeUserIdRef = useRef<string | null>(null);
+  const loadedUserIdRef = useRef<string | null>(null);
+  const activeRestaurantIdRef = useRef<string | null>(null);
   const loadSequenceRef = useRef<number>(0);
+  const menuSequenceRef = useRef<number>(0);
+  const offersSequenceRef = useRef<number>(0);
 
   // Real owned restaurant state
   const [dbRestaurant, setDbRestaurant] = useState<DbRestaurant | null>(null);
@@ -286,63 +290,139 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const isAuthenticated = Boolean(session && user);
   const hasRestaurant = Boolean(dbRestaurant && dbRestaurant.id);
 
-  // Load Menu Data from Supabase
-  const loadMenuData = useCallback(async (restaurantId: string) => {
-    if (!restaurantId) return;
-    setMenuLoading(true);
+  // تصفير شامل لجميع بيانات وحالات المستخدم والمطعم السابق فورًا لمنع أي تسرب للبيانات
+  const resetUserDataState = useCallback(() => {
+    orderRealtimeManager.stop();
+    setUserProfile(null);
+    setIsUserBanned(false);
+    setIsUserSuspended(false);
+    setBanReason(undefined);
+    setOwner(EMPTY_OWNER);
+    setDbRestaurant(null);
+    setRestaurant(EMPTY_RESTAURANT);
+    setCategories([]);
+    setMenuItems([]);
+    setMenuLoading(false);
     setMenuError(null);
-    try {
-      const [catsRes, itemsRes] = await Promise.all([
-        fetchRestaurantMenuCategories(restaurantId),
-        fetchRestaurantMenuItems(restaurantId),
-      ]);
-
-      if (catsRes.error) {
-        setMenuError(catsRes.error);
-      } else if (catsRes.data) {
-        setCategories(catsRes.data);
-      }
-
-      if (itemsRes.error) {
-        setMenuError((prev) => (prev ? `${prev} | ${itemsRes.error}` : itemsRes.error));
-      } else if (itemsRes.data) {
-        setMenuItems(itemsRes.data);
-      }
-    } catch (err: any) {
-      setMenuError(err?.message || 'فشل جلب بيانات المنيو من قاعدة البيانات.');
-    } finally {
-      setMenuLoading(false);
-    }
-  }, []);
-
-  // Load Offers Data from Supabase
-  const loadOffersData = useCallback(async (restaurantId: string) => {
-    if (!restaurantId) return;
-    setOffersLoading(true);
+    setOffers([]);
+    setOffersLoading(false);
     setOffersError(null);
-    try {
-      const res = await fetchRestaurantOffers(restaurantId);
-      if (res.error) {
-        setOffersError(res.error);
-      } else if (res.data) {
-        setOffers(res.data);
-      }
-    } catch (err: any) {
-      setOffersError(err?.message || 'فشل جلب بيانات العروض من قاعدة البيانات.');
-    } finally {
-      setOffersLoading(false);
-    }
+    setOrders([]);
+    setOrdersLoading(false);
+    setOrdersError(null);
+    setOrdersRealtimeStatus('DISCONNECTED');
+    setPendingCancellations([]);
+    setMovements([]);
+    setNotifications([]);
+    setNewOrderAlert(null);
+    setDataLoadError(null);
+    activeRestaurantIdRef.current = null;
   }, []);
+
+  // Load Menu Data from Supabase with full protection against stale responses
+  const loadMenuData = useCallback(
+    async (restaurantId: string, targetSequence?: number) => {
+      if (!restaurantId) return;
+
+      const seq = targetSequence !== undefined ? targetSequence : loadSequenceRef.current;
+      const menuSeq = ++menuSequenceRef.current;
+
+      // فحص لضمان أن الطلب ما زال مطابقًا لتسلسل المستخدم والمطعم النشط
+      const isStale = () => {
+        return (
+          seq !== loadSequenceRef.current ||
+          menuSeq !== menuSequenceRef.current ||
+          activeRestaurantIdRef.current !== restaurantId
+        );
+      };
+
+      setMenuLoading(true);
+      setMenuError(null);
+
+      try {
+        const [catsRes, itemsRes] = await Promise.all([
+          fetchRestaurantMenuCategories(restaurantId),
+          fetchRestaurantMenuItems(restaurantId),
+        ]);
+
+        if (isStale()) return;
+
+        if (catsRes.error) {
+          setMenuError(catsRes.error);
+        } else if (catsRes.data) {
+          setCategories(catsRes.data);
+        }
+
+        if (isStale()) return;
+
+        if (itemsRes.error) {
+          setMenuError((prev) => (prev ? `${prev} | ${itemsRes.error}` : itemsRes.error));
+        } else if (itemsRes.data) {
+          setMenuItems(itemsRes.data);
+        }
+      } catch (err: any) {
+        if (!isStale()) {
+          setMenuError(err?.message || 'فشل جلب بيانات المنيو من قاعدة البيانات.');
+        }
+      } finally {
+        if (!isStale()) {
+          setMenuLoading(false);
+        }
+      }
+    },
+    []
+  );
+
+  // Load Offers Data from Supabase with full protection against stale responses
+  const loadOffersData = useCallback(
+    async (restaurantId: string, targetSequence?: number) => {
+      if (!restaurantId) return;
+
+      const seq = targetSequence !== undefined ? targetSequence : loadSequenceRef.current;
+      const offersSeq = ++offersSequenceRef.current;
+
+      const isStale = () => {
+        return (
+          seq !== loadSequenceRef.current ||
+          offersSeq !== offersSequenceRef.current ||
+          activeRestaurantIdRef.current !== restaurantId
+        );
+      };
+
+      setOffersLoading(true);
+      setOffersError(null);
+
+      try {
+        const res = await fetchRestaurantOffers(restaurantId);
+        if (isStale()) return;
+
+        if (res.error) {
+          setOffersError(res.error);
+        } else if (res.data) {
+          setOffers(res.data);
+        }
+      } catch (err: any) {
+        if (!isStale()) {
+          setOffersError(err?.message || 'فشل جلب بيانات العروض من قاعدة البيانات.');
+        }
+      } finally {
+        if (!isStale()) {
+          setOffersLoading(false);
+        }
+      }
+    },
+    []
+  );
 
   const reloadMenu = useCallback(async () => {
     if (dbRestaurant?.id) {
-      await loadMenuData(dbRestaurant.id);
+      await loadMenuData(dbRestaurant.id, loadSequenceRef.current);
     }
   }, [dbRestaurant?.id, loadMenuData]);
 
   const reloadOffers = useCallback(async () => {
     if (dbRestaurant?.id) {
-      await loadOffersData(dbRestaurant.id);
+      await loadOffersData(dbRestaurant.id, loadSequenceRef.current);
     }
   }, [dbRestaurant?.id, loadOffersData]);
 
@@ -536,6 +616,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       if (restResult.restaurant) {
         setDbRestaurant(restResult.restaurant);
+        activeRestaurantIdRef.current = restResult.restaurant.id;
         const mapped = mapDbRestaurantToProfile(
           restResult.restaurant,
           authUser.email || '',
@@ -543,14 +624,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         );
         if (sequence !== loadSequenceRef.current) return;
         setRestaurant(mapped);
+        loadedUserIdRef.current = authUser.id;
 
-        // تحميل أقسام وأصناف وعروض المطعم الحقيقي من جداول Supabase الفعلية
+        // تحميل أقسام وأصناف وعروض المطعم الحقيقي بالتزامن مع التحقق المستمر من التسلسل والمطعم
         await Promise.all([
-          loadMenuData(restResult.restaurant.id),
-          loadOffersData(restResult.restaurant.id),
+          loadMenuData(restResult.restaurant.id, sequence),
+          loadOffersData(restResult.restaurant.id, sequence),
         ]);
       } else {
         setDbRestaurant(null);
+        activeRestaurantIdRef.current = null;
         setRestaurant({
           ...EMPTY_RESTAURANT,
           registrationStatus: 'NOT_REGISTERED',
@@ -558,6 +641,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setCategories([]);
         setMenuItems([]);
         setOffers([]);
+        loadedUserIdRef.current = authUser.id;
       }
     },
     [mapDbRestaurantToProfile, loadMenuData, loadOffersData]
@@ -565,10 +649,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   /**
    * المنسق المشترك الموحد لجميع مسارات تحميل بيانات المستخدم:
-   * 1. يمنع تشغيل تحميلين متزامنين لنفس المستخدم (يعيد الوعد الجاري بأمان)
-   * 2. يدعم التبديل الفوري إذا تغير المستخدم بجلسة أحدث
-   * 3. يمنع نتيجة قديمة من استبدال بيانات جلسة مستخدم أحدث عبر loadSequenceRef
-   * 4. يضمن عودة authLoading إلى false وإلغاء القفل في جميع حالات النجاح والفشل والاستثناءات
+   * 1. يمنع تسرب بيانات المستخدم والمطعم السابق بتصفيرها فورًا إذا تغير المستخدم قبل بدء أي طلب
+   * 2. يمنع تشغيل تحميلين متزامنين لنفس المستخدم (يعيد الوعد الجاري بأمان)
+   * 3. يدعم التبديل الفوري إذا تغير المستخدم بجلسة أحدث
+   * 4. يمنع نتيجة قديمة من استبدال بيانات جلسة مستخدم أحدث عبر loadSequenceRef
+   * 5. يضمن عودة authLoading إلى false وإلغاء القفل في جميع حالات النجاح والفشل والاستثناءات
    */
   const coordinateLoadUserData = useCallback(
     async (authUser: User): Promise<void> => {
@@ -588,6 +673,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           // الخطأ يعالج داخل الوعد النشط
         }
         return;
+      }
+
+      // إذا كان المستخدم الجديد مختلفًا عن المستخدم المحمل حاليًا: تصفير بيانات السابق فورًا قبل البدء
+      const isDifferentUser =
+        loadedUserIdRef.current !== null && loadedUserIdRef.current !== authUser.id;
+      if (isDifferentUser) {
+        resetUserDataState();
+        loadedUserIdRef.current = null;
       }
 
       // زيادة رقم التسلسل لإبطال أي عمليات أقدم إذا تغير المستخدم
@@ -618,7 +711,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       activeLoadPromiseRef.current = promise;
       await promise;
     },
-    [executeLoadUserData]
+    [executeLoadUserData, resetUserDataState]
   );
 
   const retryLoadUserData = useCallback(async () => {
@@ -705,10 +798,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         loadSequenceRef.current++;
         activeLoadPromiseRef.current = null;
         activeUserIdRef.current = null;
-        setDbRestaurant(null);
-        setRestaurant(EMPTY_RESTAURANT);
-        setOwner(EMPTY_OWNER);
-        setDataLoadError(null);
+        loadedUserIdRef.current = null;
+        resetUserDataState();
         setAuthLoading(false);
       }
     });
@@ -823,6 +914,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     loadSequenceRef.current++;
     activeLoadPromiseRef.current = null;
     activeUserIdRef.current = null;
+    loadedUserIdRef.current = null;
     if (isSupabaseConfigured) {
       try {
         await supabase.auth.signOut();
@@ -830,23 +922,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         console.error('Logout error:', err);
       }
     }
-    orderRealtimeManager.stop();
+    resetUserDataState();
     setSession(null);
     setUser(null);
-    setUserProfile(null);
-    setDbRestaurant(null);
-    setRestaurant(EMPTY_RESTAURANT);
-    setOwner(EMPTY_OWNER);
-    setCategories([]);
-    setMenuItems([]);
-    setOffers([]);
-    setOrders([]);
-    setOrdersLoading(false);
-    setOrdersError(null);
-    setOrdersRealtimeStatus('DISCONNECTED');
-    setMovements([]);
-    setNotifications([]);
-    setDataLoadError(null);
     setAuthLoading(false);
   };
 
