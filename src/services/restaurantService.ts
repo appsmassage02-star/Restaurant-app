@@ -14,6 +14,8 @@ export interface RestaurantFetchResult {
   error: string | null;
 }
 
+export type SupabaseErrorCategory = 'connection' | 'permission' | 'schema' | 'unknown';
+
 export interface ProfileFetchResult {
   profile: DbProfile | null;
   accountStatus: 'active' | 'banned' | 'suspended';
@@ -22,6 +24,7 @@ export interface ProfileFetchResult {
   banReason?: string;
   error: string | null;
   isConnectionError?: boolean;
+  errorCategory?: SupabaseErrorCategory;
 }
 
 export interface CreateRestaurantResult {
@@ -122,6 +125,107 @@ export async function fetchOwnerRestaurant(
   }
 }
 
+export interface ClassifiedSupabaseError {
+  category: SupabaseErrorCategory;
+  userMessage: string;
+  isConnectionError: boolean;
+  code?: string;
+}
+
+/**
+ * تصنيف أخطاء Supabase بدقة:
+ * - خطأ اتصال / شبكة / مهلة (isConnectionError = true)
+ * - خطأ صلاحيات أو RLS (isConnectionError = false)
+ * - خطأ مخطط أو صيغة استعلام (isConnectionError = false)
+ * - أخطاء أخرى غير معروفة (isConnectionError = false)
+ */
+export function classifySupabaseError(error: any): ClassifiedSupabaseError {
+  if (!error) {
+    return {
+      category: 'unknown',
+      userMessage: 'حدث خطأ غير معروف.',
+      isConnectionError: false,
+    };
+  }
+
+  const message = String(error?.message || '').toLowerCase();
+  const code = String(error?.code || '').toUpperCase();
+  const details = String(error?.details || '').toLowerCase();
+
+  // 1. Connection / Network / Timeout errors
+  const isConnection =
+    message.includes('failed to fetch') ||
+    message.includes('networkerror') ||
+    message.includes('network error') ||
+    message.includes('fetch failed') ||
+    message.includes('timeout') ||
+    message.includes('timed out') ||
+    message.includes('abort') ||
+    message.includes('econnrefused') ||
+    message.includes('connection refused') ||
+    message.includes('offline') ||
+    code === 'ETIMEDOUT' ||
+    code === 'ECONNREFUSED' ||
+    code === 'ECONNABORTED' ||
+    code === 'FETCH_ERROR';
+
+  if (isConnection) {
+    return {
+      category: 'connection',
+      userMessage: 'تعذر الاتصال بـ Supabase. يرجى التحقق من اتصال الإنترنت أو خادم الخدمة.',
+      isConnectionError: true,
+      code,
+    };
+  }
+
+  // 2. Permission / RLS / Auth errors
+  const isPermission =
+    code === '42501' || // PostgreSQL insufficient_privilege
+    code === 'PGRST301' || // PostgREST JWT expired
+    message.includes('permission denied') ||
+    message.includes('row-level security') ||
+    message.includes('not authorized') ||
+    message.includes('jwt') ||
+    details.includes('permission') ||
+    details.includes('row-level security');
+
+  if (isPermission) {
+    return {
+      category: 'permission',
+      userMessage: 'لا تملك الصلاحية الكافية لقراءة بيانات الملف الشخصي (قيود الوصول RLS).',
+      isConnectionError: false,
+      code,
+    };
+  }
+
+  // 3. Schema / Query / Syntax errors
+  const isSchema =
+    code === '42703' || // undefined_column
+    code === '42P01' || // undefined_table
+    code.startsWith('PGRST1') ||
+    code.startsWith('PGRST2') ||
+    message.includes('column') ||
+    message.includes('relation') ||
+    message.includes('syntax error');
+
+  if (isSchema) {
+    return {
+      category: 'schema',
+      userMessage: 'خطأ في استعلام بيانات الملف الشخصي بقاعدة البيانات.',
+      isConnectionError: false,
+      code,
+    };
+  }
+
+  // 4. Other / Unknown errors
+  return {
+    category: 'unknown',
+    userMessage: error?.message || 'حدث خطأ أثناء قراءة بيانات الملف الشخصي.',
+    isConnectionError: false,
+    code,
+  };
+}
+
 /**
  * جلب الملف الشخصي للمستخدم الحالي من جدول profiles
  * والتحقق من حالة الحساب اعتمادًا على الأعمدة الفعلية فقط (is_blocked و status)
@@ -148,14 +252,16 @@ export async function fetchUserProfile(
       .maybeSingle();
 
     if (error) {
-      console.warn('Could not fetch profile from Supabase:', error.message);
+      console.warn('Could not fetch profile from Supabase:', error);
+      const classified = classifySupabaseError(error);
       return {
         profile: null,
         accountStatus: 'active',
         isBanned: false,
         isSuspended: false,
-        error: `تعذر الاتصال بـ Supabase لجلب الملف الشخصي: ${error.message}`,
-        isConnectionError: true,
+        error: classified.userMessage,
+        isConnectionError: classified.isConnectionError,
+        errorCategory: classified.category,
       };
     }
 
@@ -199,13 +305,16 @@ export async function fetchUserProfile(
       error: null,
     };
   } catch (err: any) {
+    console.error('Exception in fetchUserProfile:', err);
+    const classified = classifySupabaseError(err);
     return {
       profile: null,
       accountStatus: 'active',
       isBanned: false,
       isSuspended: false,
-      error: err?.message || 'فشل جلب ملف المستخدم بسبب انقطاع الاتصال.',
-      isConnectionError: true,
+      error: classified.userMessage,
+      isConnectionError: classified.isConnectionError,
+      errorCategory: classified.category,
     };
   }
 }

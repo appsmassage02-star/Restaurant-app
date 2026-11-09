@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useRef } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured, getSupabaseConfig } from '../services/supabase';
 import {
@@ -253,6 +253,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [isUserSuspended, setIsUserSuspended] = useState<boolean>(false);
   const [banReason, setBanReason] = useState<string | undefined>(undefined);
   const [dataLoadError, setDataLoadError] = useState<string | null>(null);
+  const isRetryingRef = useRef<boolean>(false);
 
   // Real owned restaurant state
   const [dbRestaurant, setDbRestaurant] = useState<DbRestaurant | null>(null);
@@ -477,87 +478,108 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     async (authUser: User) => {
       setDataLoadError(null);
 
-      // 1. Fetch Profile
-      const profResult = await fetchUserProfile(authUser.id);
-      if (profResult.isConnectionError) {
-        setDataLoadError(
-          profResult.error || 'تعذر الاتصال بـ Supabase لجلب الملف الشخصي. يرجى التحقق من الشبكة.'
-        );
-        return;
-      }
+      try {
+        // 1. Fetch Profile
+        const profResult = await fetchUserProfile(authUser.id);
+        if (profResult.error) {
+          setDataLoadError(profResult.error);
+          return;
+        }
 
-      setUserProfile(profResult.profile);
-      setIsUserBanned(profResult.isBanned);
-      setIsUserSuspended(profResult.isSuspended);
-      setBanReason(profResult.banReason);
+        setUserProfile(profResult.profile);
+        setIsUserBanned(profResult.isBanned);
+        setIsUserSuspended(profResult.isSuspended);
+        setBanReason(profResult.banReason);
 
-      if (profResult.isBanned || profResult.isSuspended) {
-        setDbRestaurant(null);
-        setCategories([]);
-        setMenuItems([]);
-        setOffers([]);
-        return;
-      }
+        if (profResult.isBanned || profResult.isSuspended) {
+          setDbRestaurant(null);
+          setCategories([]);
+          setMenuItems([]);
+          setOffers([]);
+          return;
+        }
 
-      const ownerName =
-        profResult.profile?.full_name ||
-        authUser.user_metadata?.full_name ||
-        authUser.user_metadata?.name ||
-        authUser.email?.split('@')[0] ||
-        'مالك المطعم';
+        const ownerName =
+          profResult.profile?.full_name ||
+          authUser.user_metadata?.full_name ||
+          authUser.user_metadata?.name ||
+          authUser.email?.split('@')[0] ||
+          'مالك المطعم';
 
-      const ownerPhone =
-        profResult.profile?.phone || authUser.user_metadata?.phone || '';
+        const ownerPhone =
+          profResult.profile?.phone || authUser.user_metadata?.phone || '';
 
-      const ownerObj: RestaurantOwner = {
-        id: authUser.id,
-        fullName: ownerName,
-        phone: ownerPhone,
-        email: authUser.email || '',
-      };
-      setOwner(ownerObj);
+        const ownerObj: RestaurantOwner = {
+          id: authUser.id,
+          fullName: ownerName,
+          phone: ownerPhone,
+          email: authUser.email || '',
+        };
+        setOwner(ownerObj);
 
-      // 2. Fetch Restaurant owned by this user
-      const restResult = await fetchOwnerRestaurant(authUser.id);
-      if (restResult.error) {
-        setDataLoadError(restResult.error);
-        return;
-      }
+        // 2. Fetch Restaurant owned by this user
+        const restResult = await fetchOwnerRestaurant(authUser.id);
+        if (restResult.error) {
+          setDataLoadError(restResult.error);
+          return;
+        }
 
-      if (restResult.restaurant) {
-        setDbRestaurant(restResult.restaurant);
-        const mapped = mapDbRestaurantToProfile(
-          restResult.restaurant,
-          authUser.email || '',
-          ownerName
-        );
-        setRestaurant(mapped);
+        if (restResult.restaurant) {
+          setDbRestaurant(restResult.restaurant);
+          const mapped = mapDbRestaurantToProfile(
+            restResult.restaurant,
+            authUser.email || '',
+            ownerName
+          );
+          setRestaurant(mapped);
 
-        // تحميل أقسام وأصناف وعروض المطعم الحقيقي من جداول Supabase الفعلية
-        await Promise.all([
-          loadMenuData(restResult.restaurant.id),
-          loadOffersData(restResult.restaurant.id),
-        ]);
-      } else {
-        setDbRestaurant(null);
-        setRestaurant({
-          ...EMPTY_RESTAURANT,
-          registrationStatus: 'NOT_REGISTERED',
-        });
-        setCategories([]);
-        setMenuItems([]);
-        setOffers([]);
+          // تحميل أقسام وأصناف وعروض المطعم الحقيقي من جداول Supabase الفعلية
+          await Promise.all([
+            loadMenuData(restResult.restaurant.id),
+            loadOffersData(restResult.restaurant.id),
+          ]);
+        } else {
+          setDbRestaurant(null);
+          setRestaurant({
+            ...EMPTY_RESTAURANT,
+            registrationStatus: 'NOT_REGISTERED',
+          });
+          setCategories([]);
+          setMenuItems([]);
+          setOffers([]);
+        }
+      } catch (err: any) {
+        console.error('Unhandled error in loadUserData:', err);
+        setDataLoadError(err?.message || 'حدث استثناء غير متوقع أثناء تحميل بيانات الحساب والمطعم.');
       }
     },
     [mapDbRestaurantToProfile, loadMenuData, loadOffersData]
   );
 
   const retryLoadUserData = useCallback(async () => {
-    setDataLoadError(null);
-    if (user) {
-      setAuthLoading(true);
-      await loadUserData(user);
+    // منع تداخل محاولات إعادة التحميل إذا كان هناك تحميل جارٍ بالفعل
+    if (isRetryingRef.current) {
+      return;
+    }
+
+    if (!user) {
       setAuthLoading(false);
+      return;
+    }
+
+    isRetryingRef.current = true;
+    setDataLoadError(null);
+    setAuthLoading(true);
+
+    try {
+      await loadUserData(user);
+    } catch (err: any) {
+      console.error('Exception during retryLoadUserData:', err);
+      setDataLoadError(err?.message || 'حدث استثناء أثناء إعادة محاولة تحميل البيانات.');
+    } finally {
+      // ضمان إنهاء حالة التحميل وعودة authLoading إلى false في كافة الحالات
+      setAuthLoading(false);
+      isRetryingRef.current = false;
     }
   }, [user, loadUserData]);
 
