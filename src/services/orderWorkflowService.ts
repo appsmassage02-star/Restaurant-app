@@ -349,7 +349,51 @@ export async function setRestaurantDeliveryEnabled(
 }
 
 /**
- * جلب قائمة طلبات الإلغاء المعلقة المرسلة من العملاء
+ * إرسال طلب إلغاء طلب من قِبل المطعم
+ * يستدعي الإجراء المخزن: restaurant_request_order_cancellation
+ * @param orderId معرف الطلب
+ * @param reason سبب الإلغاء
+ */
+export async function requestOrderCancellation(
+  orderId: string,
+  reason: string
+): Promise<ServiceOperationResult> {
+  if (!isSupabaseConfigured) {
+    return { success: false, error: 'الاتصال بـ Supabase غير مهيأ.' };
+  }
+  if (!orderId) {
+    return { success: false, error: 'معرف الطلب غير محدد.' };
+  }
+  if (!reason || !reason.trim()) {
+    return { success: false, error: 'يرجى إدخال سبب واضح لطلب الإلغاء.' };
+  }
+
+  try {
+    const { data, error } = await supabase.rpc('restaurant_request_order_cancellation', {
+      p_order_id: orderId,
+      p_reason: reason.trim(),
+    });
+
+    if (error) {
+      console.error('Error in restaurant_request_order_cancellation:', error);
+      return {
+        success: false,
+        error: `فشل إرسال طلب إلغاء الطلب: ${error.message}`,
+      };
+    }
+
+    return { success: true, data };
+  } catch (err: any) {
+    console.error('Unexpected error in requestOrderCancellation:', err);
+    return {
+      success: false,
+      error: err?.message || 'حدث خطأ أثناء إرسال طلب الإلغاء.',
+    };
+  }
+}
+
+/**
+ * جلب قائمة طلبات الإلغاء المعلقة (من العملاء أو السائقين أو المطعم)
  */
 export async function listPendingCancellations(): Promise<
   ServiceOperationResult<DbPendingCancellation[]>
@@ -371,15 +415,32 @@ export async function listPendingCancellations(): Promise<
     }
 
     const requests: DbPendingCancellation[] = Array.isArray(data)
-      ? data.map((row: any) => ({
-          id: String(row.id || row.request_id || ''),
-          order_id: String(row.order_id || ''),
-          order_number: row.order_number ? String(row.order_number) : undefined,
-          customer_name: row.customer_name || 'عميل',
-          reason: row.reason || row.cancellation_reason || 'طلب العميل إلغاء الأوردر',
-          created_at: row.created_at || new Date().toISOString(),
-          status: row.status || 'pending',
-        }))
+      ? data.map((row: any) => {
+          // استنتاج مصدر طلب الإلغاء بدقة (عميل، طيار، أو مطعم)
+          const rawRole = (row.requested_by_role || row.requester_role || row.role || '').toLowerCase();
+          const reqBy = String(row.requested_by || '').toLowerCase();
+
+          let role: 'customer' | 'driver' | 'restaurant' = 'customer';
+          if (rawRole.includes('driver') || reqBy.includes('driver') || row.is_driver) {
+            role = 'driver';
+          } else if (rawRole.includes('restaurant') || reqBy.includes('restaurant') || row.is_restaurant) {
+            role = 'restaurant';
+          } else {
+            role = 'customer';
+          }
+
+          return {
+            id: String(row.id || row.request_id || ''),
+            order_id: String(row.order_id || ''),
+            order_number: row.order_number ? String(row.order_number) : undefined,
+            customer_name: row.customer_name || 'عميل',
+            requested_by: row.requested_by || null,
+            requested_by_role: role,
+            reason: row.reason || row.cancellation_reason || 'طلب إلغاء الأوردر',
+            created_at: row.created_at || new Date().toISOString(),
+            status: row.status || 'pending',
+          };
+        })
       : [];
 
     return { success: true, data: requests };
@@ -394,7 +455,7 @@ export async function listPendingCancellations(): Promise<
 }
 
 /**
- * البت في طلب إلغاء العميل (موافقة أو رفض مع سبب)
+ * البت في طلب الإلغاء (موافقة أو رفض مع سبب)
  * @param requestId معرف طلب الإلغاء
  * @param approve هل وافق المطعم على الإلغاء؟
  * @param reason سبب الرفض في حال رفض المطعم

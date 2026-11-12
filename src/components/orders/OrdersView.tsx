@@ -254,10 +254,10 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
             <ShieldAlert className="w-5 h-5 text-rose-600 shrink-0 animate-bounce" />
             <div>
               <p className="font-black text-sm">
-                تنبيه: يوجد {pendingCancellations.length} طلب إلغاء معلق من الزبائن بانتظار قرارك!
+                تنبيه: يوجد {pendingCancellations.length} طلب إلغاء معلق بانتظار المتابعة والبت!
               </p>
               <p className="text-rose-800 text-xs mt-0.5">
-                يرجى فتح تفاصيل الطلب للبت في طلب الإلغاء بالموافقة أو الرفض مع ذكر السبب.
+                يرجى فتح تفاصيل الطلب لمراجعة مصدر الإلغاء (العميل أو السائق أو المطعم) والبت فيه وفق دورة العمل المعتمدة.
               </p>
             </div>
           </div>
@@ -418,8 +418,8 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                     {getStatusBadge(ord.status, ord.rawStatus, ord.rawRoute || ord.route)}
                   </div>
 
-                  {/* Route Indicator Tag */}
-                  <div className="mb-2">
+                  {/* Route & Driver Indicator Tags */}
+                  <div className="flex flex-wrap items-center gap-1.5 mb-2">
                     {isSelf ? (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 text-[10px] font-bold border border-emerald-200">
                         <Truck className="w-3 h-3 text-emerald-600" />
@@ -431,6 +431,30 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                         مسار 2: {getArabicRouteLabel(ord.rawRoute || ord.route)}
                       </span>
                     )}
+
+                    {ord.driverInfo && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-800 text-[10px] font-bold border border-indigo-200">
+                        <Truck className="w-3 h-3 text-indigo-600" />
+                        الطيار: {ord.driverInfo.name}
+                      </span>
+                    )}
+
+                    {(() => {
+                      const cancel = pendingCancellations.find((c) => c.order_id === ord.id && c.status === 'pending');
+                      if (!cancel) return null;
+                      const roleLabel =
+                        cancel.requested_by_role === 'driver'
+                          ? 'الطيار'
+                          : cancel.requested_by_role === 'restaurant'
+                          ? 'المطعم'
+                          : 'العميل';
+                      return (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-100 text-rose-800 text-[10px] font-bold border border-rose-300 animate-pulse">
+                          <ShieldAlert className="w-3 h-3 text-rose-600" />
+                          طلب إلغاء من {roleLabel}
+                        </span>
+                      );
+                    })()}
                   </div>
 
                   {/* Customer Brief */}

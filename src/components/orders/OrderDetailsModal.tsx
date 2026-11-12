@@ -51,6 +51,7 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
     setOrderPreparingWorkflow,
     markOrderReadyWorkflow,
     decideCancellationWorkflow,
+    requestOrderCancellationWorkflow,
     pendingCancellations,
   } = useApp();
 
@@ -68,9 +69,13 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
   const [showRejectDialog, setShowRejectDialog] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
 
-  // Cancel decision state
+  // Cancel decision state (when customer or driver requested cancellation)
   const [showCancelRejectDialog, setShowCancelRejectDialog] = useState(false);
   const [cancelRejectReason, setCancelRejectReason] = useState('');
+
+  // Restaurant requested cancellation state
+  const [showRestaurantCancelDialog, setShowRestaurantCancelDialog] = useState(false);
+  const [restaurantCancelReason, setRestaurantCancelReason] = useState('');
 
   // Item availability editing state
   const [editingItemQtyId, setEditingItemQtyId] = useState<string | null>(null);
@@ -302,9 +307,35 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
       setActionSuccess(
         approve
           ? 'تمت الموافقة على إلغاء الطلب بناءً على رغبة العميل.'
-          : 'تم رفض طلب الإلغاء مع إشعار العميل بالسبب.'
+          : 'تم رفض طلب الإلغاء مع إشعار مقدم الطلب بالسبب.'
       );
       setShowCancelRejectDialog(false);
+      refreshOrders();
+      setTimeout(() => setActionSuccess(null), 3500);
+    }
+    setIsSubmitting(false);
+  };
+
+  const handleRequestRestaurantCancel = async () => {
+    if (!restaurantCancelReason.trim()) {
+      setActionError('يرجى ذكر سبب واضح لطلب الإلغاء من قِبل المطعم.');
+      return;
+    }
+    setActionError(null);
+    setActionSuccess(null);
+    setIsSubmitting(true);
+
+    const res = await requestOrderCancellationWorkflow(
+      order.id,
+      restaurantCancelReason.trim()
+    );
+
+    if (!res.success) {
+      setActionError(res.error || 'فشل إرسال طلب الإلغاء.');
+    } else {
+      setActionSuccess('تم إرسال طلب إلغاء الطلب بنجاح إلى الإدارة والمنظومة.');
+      setShowRestaurantCancelDialog(false);
+      setRestaurantCancelReason('');
       refreshOrders();
       setTimeout(() => setActionSuccess(null), 3500);
     }
@@ -390,17 +421,37 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
             <div className="p-4 bg-rose-50 border-2 border-rose-300 rounded-2xl space-y-3 shadow-xs">
               <div className="flex items-center gap-2 text-rose-900 font-black text-sm">
                 <ShieldAlert className="w-5 h-5 text-rose-600 animate-bounce" />
-                <span>تنبيه هام: العميل أرسل طلباً لإلغاء هذا الأوردر!</span>
+                <span>
+                  تنبيه هام: ورد طلب لإلغاء هذا الأوردر من{' '}
+                  {pendingCancel.requested_by_role === 'driver'
+                    ? 'مندوب التوصيل (الطيار)'
+                    : pendingCancel.requested_by_role === 'restaurant'
+                    ? 'إدارة المطعم'
+                    : 'العميل'}
+                  !
+                </span>
               </div>
               <p className="text-xs text-rose-800 bg-white/70 p-2.5 rounded-xl border border-rose-200">
-                <span className="font-bold">سبب الإلغاء المذكور من العميل: </span>
+                <span className="font-bold">
+                  سبب الإلغاء المذكور (
+                  {pendingCancel.requested_by_role === 'driver'
+                    ? 'من الطيار'
+                    : pendingCancel.requested_by_role === 'restaurant'
+                    ? 'من المطعم'
+                    : 'من العميل'}
+                  ):{' '}
+                </span>
                 <span>{pendingCancel.reason}</span>
               </p>
 
-              {showCancelRejectDialog ? (
+              {pendingCancel.requested_by_role === 'restaurant' ? (
+                <div className="p-2.5 bg-amber-50 text-amber-900 rounded-xl border border-amber-200 font-medium text-xs">
+                  طلب الإلغاء تم إرساله من قِبل المطعم وهو قيد مراجعة واعتماد الإدارة أو العميل وفق دورة العمل المعتمدة ولا يمكن للمطعم البت فيه ذاتياً.
+                </div>
+              ) : showCancelRejectDialog ? (
                 <div className="space-y-2 pt-1 bg-white p-3 rounded-xl border border-rose-200">
                   <label className="block font-bold text-slate-800 text-xs">
-                    سبب رفض إلغاء الطلب (سيظهر للعميل) *
+                    سبب رفض إلغاء الطلب (سيظهر لمقدم الطلب) *
                   </label>
                   <input
                     type="text"
@@ -445,6 +496,47 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
                     <span>الموافقة على الإلغاء</span>
                   </button>
                 </div>
+              )}
+            </div>
+          )}
+
+          {/* Driver Information Card (when courier is assigned) */}
+          {order.driverInfo && (
+            <div className="bg-indigo-50/90 border border-indigo-200 p-3.5 rounded-2xl flex items-center justify-between gap-3 text-xs shadow-2xs">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 bg-indigo-600 text-white rounded-xl shadow-xs">
+                  <Truck className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-black text-indigo-950">
+                      كابتن التوصيل: {order.driverInfo.name}
+                    </span>
+                    {order.driverInfo.assignedAt && (
+                      <span className="text-[10px] text-indigo-700 font-mono bg-indigo-100 px-2 py-0.5 rounded-md">
+                        إسناد: {new Date(order.driverInfo.assignedAt).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    )}
+                  </div>
+                  {order.driverInfo.phone ? (
+                    <span className="text-slate-600 text-[11px] font-mono dir-ltr block text-right mt-0.5">
+                      هاتف: {order.driverInfo.phone}
+                    </span>
+                  ) : (
+                    <span className="text-slate-400 text-[10px] block mt-0.5">
+                      رقم الهاتف غير مسجل
+                    </span>
+                  )}
+                </div>
+              </div>
+              {order.driverInfo.phone && (
+                <a
+                  href={`tel:${order.driverInfo.phone}`}
+                  className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+                >
+                  <Phone className="w-3.5 h-3.5" />
+                  <span>اتصال</span>
+                </a>
               )}
             </div>
           )}
@@ -910,6 +1002,40 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
             </div>
           )}
 
+          {/* Sub-Dialog: Restaurant Request Cancellation Prompt */}
+          {showRestaurantCancelDialog && (
+            <div className="p-4 bg-white rounded-2xl border-2 border-rose-400 shadow-md space-y-3">
+              <h4 className="font-black text-rose-900 text-xs flex items-center gap-1.5">
+                <AlertTriangle className="w-4 h-4 text-rose-600" />
+                طلب إلغاء الأوردر من إدارة المطعم (إلزامي ذكر السبب):
+              </h4>
+              <textarea
+                rows={2}
+                value={restaurantCancelReason}
+                onChange={(e) => setRestaurantCancelReason(e.target.value)}
+                placeholder="مثال: تعذر إكمال الطلب بسبب مشكلة طارئة في المطبخ..."
+                className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-rose-500 font-medium"
+              />
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  onClick={() => setShowRestaurantCancelDialog(false)}
+                  disabled={isSubmitting}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs cursor-pointer"
+                >
+                  تراجع
+                </button>
+                <button
+                  onClick={handleRequestRestaurantCancel}
+                  disabled={isSubmitting || !restaurantCancelReason.trim()}
+                  className="px-5 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-black rounded-xl text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
+                >
+                  {isSubmitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                  <span>إرسال طلب الإلغاء</span>
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Action Buttons Bar */}
           <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
             {/* Status condition notes / tooltips */}
@@ -993,6 +1119,18 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
                   <Check className="w-3.5 h-3.5 text-purple-600" />
                   <span>الطلب جاهز وبانتظار الاستلام للتوصيل</span>
                 </span>
+              )}
+
+              {/* Button for restaurant to request cancellation if order is in progress and no cancel request is pending */}
+              {(isAccepted || isPreparing) && !isReady && !pendingCancel && !showRestaurantCancelDialog && (
+                <button
+                  onClick={() => setShowRestaurantCancelDialog(true)}
+                  disabled={isSubmitting}
+                  className="px-3.5 py-2 bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-700 font-bold rounded-xl text-xs transition-colors cursor-pointer border border-slate-200"
+                  title="إرسال طلب إلغاء هذا الطلب من إدارة المطعم"
+                >
+                  طلب إلغاء الأوردر
+                </button>
               )}
 
               <button

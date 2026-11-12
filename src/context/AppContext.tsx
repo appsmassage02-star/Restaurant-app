@@ -58,6 +58,7 @@ import {
   setRestaurantDeliveryEnabled as setRestaurantDeliveryEnabledRpc,
   listPendingCancellations,
   decideCancellation as decideCancellationRpc,
+  requestOrderCancellation as requestOrderCancellationRpc,
 } from '../services/orderWorkflowService';
 import { DbPendingCancellation } from '../types/database';
 import {
@@ -206,6 +207,7 @@ interface AppContextType {
   setOrderPreparingWorkflow: (orderId: string) => Promise<{ success: boolean; error?: string }>;
   markOrderReadyWorkflow: (orderId: string) => Promise<{ success: boolean; error?: string }>;
   decideCancellationWorkflow: (requestId: string, approve: boolean, reason?: string) => Promise<{ success: boolean; error?: string }>;
+  requestOrderCancellationWorkflow: (orderId: string, reason: string) => Promise<{ success: boolean; error?: string }>;
   pendingCancellations: DbPendingCancellation[];
   refreshPendingCancellations: () => Promise<void>;
 
@@ -675,9 +677,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         return;
       }
 
-      // إذا كان المستخدم الجديد مختلفًا عن المستخدم المحمل حاليًا: تصفير بيانات السابق فورًا قبل البدء
+      // إذا كان المستخدم الجديد مختلفًا عن المستخدم المحمل أو الجاري تحميله: تصفير بيانات السابق فورًا قبل البدء
       const isDifferentUser =
-        loadedUserIdRef.current !== null && loadedUserIdRef.current !== authUser.id;
+        (loadedUserIdRef.current !== null && loadedUserIdRef.current !== authUser.id) ||
+        (activeUserIdRef.current !== null && activeUserIdRef.current !== authUser.id);
       if (isDifferentUser) {
         resetUserDataState();
         loadedUserIdRef.current = null;
@@ -1337,6 +1340,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return { success: true };
   };
 
+  const requestOrderCancellationWorkflow = async (
+    orderId: string,
+    reason: string
+  ): Promise<{ success: boolean; error?: string }> => {
+    const res = await requestOrderCancellationRpc(orderId, reason);
+    if (!res.success) {
+      return { success: false, error: res.error };
+    }
+    await refreshPendingCancellations();
+    orderRealtimeManager.triggerSync();
+    return { success: true };
+  };
+
   const acceptOrder = (orderId: string) => {
     acceptOrderWorkflow(orderId, 'restaurant_delivery');
   };
@@ -1571,6 +1587,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setOrderPreparingWorkflow,
         markOrderReadyWorkflow,
         decideCancellationWorkflow,
+        requestOrderCancellationWorkflow,
         pendingCancellations,
         refreshPendingCancellations,
         movements,
