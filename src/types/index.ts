@@ -90,9 +90,9 @@ export interface Offer {
 }
 
 export interface SelectedOption {
-  groupId: string;
+  groupId?: string;
   groupName: string;
-  optionId: string;
+  optionId?: string;
   optionName: string;
   price: number;
 }

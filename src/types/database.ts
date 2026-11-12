@@ -163,6 +163,14 @@ export interface DbRestaurantOrderItem {
   created_at: string;
 }
 
+export interface DbRestaurantOrderItemOption {
+  id: string; // uuid
+  order_item_id: string; // uuid
+  option_name_snapshot: string;
+  value_name_snapshot: string;
+  extra_price_snapshot: number;
+}
+
 export interface DbRestaurantOrderStatusHistory {
   id: string; // uuid
   order_id: string; // uuid

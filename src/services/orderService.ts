@@ -14,6 +14,7 @@ import {
   DbRestaurantOrderItem,
   DbRestaurantOrderStatusHistory,
   DbRestaurantDeliveryOrder,
+  DbRestaurantOrderItemOption,
 } from '../types/database';
 import {
   Order,
@@ -22,6 +23,7 @@ import {
   OrderStatusHistory,
   ExecutionRoute,
   DriverInfo,
+  SelectedOption,
 } from '../types';
 
 export interface OrdersFetchResult {
@@ -162,7 +164,8 @@ export function mapDbOrderToAppOrder(
   orderItems: DbRestaurantOrderItem[] = [],
   statusHistory: DbRestaurantOrderStatusHistory[] = [],
   deliveryOrder?: DbRestaurantDeliveryOrder | null,
-  driverProfile?: { full_name?: string | null; phone?: string | null } | null
+  driverProfile?: { full_name?: string | null; phone?: string | null } | null,
+  optionsMap: Record<string, DbRestaurantOrderItemOption[]> = {}
 ): Order {
   const foodSubtotal = Number(dbOrder.food_subtotal) || 0;
   const discountTotal = Number(dbOrder.discount_amount) || 0;
@@ -195,18 +198,27 @@ export function mapDbOrderToAppOrder(
       ? deliveryFee
       : 0;
 
-  // تحويل الأصناف
+  // تحويل الأصناف مع ربط الخيارات الفعلية من جدول restaurant_order_item_options
   const items: OrderItem[] = orderItems.map((item) => {
     const unitPrice = Number(item.unit_price_snapshot) || 0;
     const qty = Number(item.quantity) || 1;
     const discount = Number(item.discount_amount) || 0;
+    const itemOpts = optionsMap[item.id] || [];
+    const selectedOptions: SelectedOption[] = itemOpts.map((opt) => ({
+      groupId: opt.id,
+      groupName: opt.option_name_snapshot || 'خيار',
+      optionId: opt.id,
+      optionName: opt.value_name_snapshot || '',
+      price: Number(opt.extra_price_snapshot) || 0,
+    }));
+
     return {
       id: item.id,
       itemId: item.menu_item_id || item.id,
       name: item.item_name_snapshot || 'صنف بدون اسم',
       priceAtOrder: unitPrice,
       quantity: qty,
-      selectedOptions: [],
+      selectedOptions,
       itemDiscount: discount,
       notes: undefined,
     };
@@ -236,22 +248,28 @@ export function mapDbOrderToAppOrder(
   }
 
   // تسوية الحالة الفعلية مع الأخذ بالاعتبار حالة التوصيل في restaurant_delivery_orders
+  // تطبيق أسبقية الحالات التنازلية الصحيحة بحيث لا يتم طمس COMPLETED أو CANCELLED
   let resolvedStatus = mapDbStatusToOrderStatus(dbOrder.status, dbOrder.fulfillment_route);
   const dbStatusLower = (dbOrder.status || '').toLowerCase().trim();
 
-  if (dbOrder.fulfillment_route === 'driver_delivery') {
+  if (dbStatusLower === 'cancelled' || dbStatusLower === 'rejected') {
+    resolvedStatus = dbStatusLower === 'cancelled' ? 'CANCELLED' : 'REJECTED';
+  } else if (dbOrder.fulfillment_route === 'driver_delivery') {
     const delivStatus = (deliveryOrder?.status || '').toLowerCase().trim();
-    if (delivStatus === 'picked_up' || deliveryOrder?.picked_up_at) {
-      resolvedStatus = 'PICKED_UP';
-    } else if (delivStatus === 'on_the_way') {
-      resolvedStatus = 'ON_THE_WAY';
+    if (delivStatus === 'cancelled') {
+      resolvedStatus = 'CANCELLED';
+    } else if (delivStatus === 'completed' || dbStatusLower === 'completed') {
+      resolvedStatus = 'COMPLETED';
     } else if (delivStatus === 'delivered' || deliveryOrder?.delivered_at) {
       resolvedStatus = 'DELIVERED';
-    } else if (delivStatus === 'completed') {
-      resolvedStatus = 'COMPLETED';
+    } else if (delivStatus === 'on_the_way') {
+      resolvedStatus = 'ON_THE_WAY';
+    } else if (delivStatus === 'picked_up' || deliveryOrder?.picked_up_at) {
+      resolvedStatus = 'PICKED_UP';
     } else if (
       delivStatus === 'assigned' ||
       delivStatus === 'driver_assigned' ||
+      delivStatus === 'assigned_to_driver' ||
       deliveryOrder?.driver_user_id ||
       deliveryOrder?.assigned_at
     ) {
@@ -376,13 +394,37 @@ export async function fetchRestaurantOrders(
       };
     }
 
-    if (itemsData) {
-      (itemsData as DbRestaurantOrderItem[]).forEach((item) => {
-        if (!itemsMap[item.order_id]) {
-          itemsMap[item.order_id] = [];
+    const allOrderItems = (itemsData as DbRestaurantOrderItem[]) || [];
+    allOrderItems.forEach((item) => {
+      if (!itemsMap[item.order_id]) {
+        itemsMap[item.order_id] = [];
+      }
+      itemsMap[item.order_id].push(item);
+    });
+
+    // 2.1 جلب خيارات الأصناف من جدول restaurant_order_item_options الفعلي
+    let optionsMap: Record<string, DbRestaurantOrderItemOption[]> = {};
+    const itemIds = allOrderItems.map((item) => item.id);
+    if (itemIds.length > 0) {
+      try {
+        const { data: optionsData, error: optionsError } = await supabase
+          .from('restaurant_order_item_options')
+          .select('*')
+          .in('order_item_id', itemIds);
+
+        if (optionsError) {
+          console.warn('Could not fetch restaurant_order_item_options (non-fatal):', optionsError.message);
+        } else if (optionsData) {
+          (optionsData as DbRestaurantOrderItemOption[]).forEach((opt) => {
+            if (!optionsMap[opt.order_item_id]) {
+              optionsMap[opt.order_item_id] = [];
+            }
+            optionsMap[opt.order_item_id].push(opt);
+          });
         }
-        itemsMap[item.order_id].push(item);
-      });
+      } catch (optErr) {
+        console.warn('Unexpected error in restaurant_order_item_options query:', optErr);
+      }
     }
 
     // 3. جلب سجل الحالات المرتبط بهذه الطلبات
@@ -410,7 +452,7 @@ export async function fetchRestaurantOrders(
       });
     }
 
-    // 4. جلب أوامر التوصيل وسجلات السائقين لطلبات دليفري طلباتي
+    // 4. جلب أوامر التوصيل وسجلات السائقين لطلبات دليفري طلباتي مع معالجة الأخطاء بشفافية
     let deliveryOrdersMap: Record<string, DbRestaurantDeliveryOrder> = {};
     let driverUserIds: string[] = [];
 
@@ -420,7 +462,9 @@ export async function fetchRestaurantOrders(
         .select('*')
         .in('order_id', orderIds);
 
-      if (!deliveryError && deliveryData) {
+      if (deliveryError) {
+        console.warn('Warning: Failed to fetch restaurant_delivery_orders (non-fatal):', deliveryError.message);
+      } else if (deliveryData) {
         (deliveryData as DbRestaurantDeliveryOrder[]).forEach((d) => {
           deliveryOrdersMap[d.order_id] = d;
           if (d.driver_user_id && !driverUserIds.includes(d.driver_user_id)) {
@@ -436,12 +480,14 @@ export async function fetchRestaurantOrders(
     let driverProfilesMap: Record<string, { full_name?: string | null; phone?: string | null }> = {};
     if (driverUserIds.length > 0) {
       try {
-        const { data: profilesData } = await supabase
+        const { data: profilesData, error: profilesError } = await supabase
           .from('profiles')
           .select('id, full_name, phone')
           .in('id', driverUserIds);
 
-        if (profilesData) {
+        if (profilesError) {
+          console.warn('Warning: Failed to fetch driver profiles (non-fatal):', profilesError.message);
+        } else if (profilesData) {
           profilesData.forEach((p: any) => {
             driverProfilesMap[p.id] = { full_name: p.full_name, phone: p.phone };
           });
@@ -457,7 +503,7 @@ export async function fetchRestaurantOrders(
       const ordHist = historyMap[dbOrder.id] || [];
       const delivOrder = deliveryOrdersMap[dbOrder.id] || null;
       const driverProf = delivOrder?.driver_user_id ? driverProfilesMap[delivOrder.driver_user_id] : null;
-      return mapDbOrderToAppOrder(dbOrder, ordItems, ordHist, delivOrder, driverProf);
+      return mapDbOrderToAppOrder(dbOrder, ordItems, ordHist, delivOrder, driverProf, optionsMap);
     });
 
     return {
@@ -519,16 +565,44 @@ export async function fetchOrderDetails(
       return { order: null, error: `فشل جلب سجل حالات الطلب: ${histRes.error.message}` };
     }
 
+    const orderItemRows = (itemsRes.data as DbRestaurantOrderItem[]) || [];
+    let optionsMap: Record<string, DbRestaurantOrderItemOption[]> = {};
+    const itemIds = orderItemRows.map((it) => it.id);
+    if (itemIds.length > 0) {
+      try {
+        const { data: optionsData, error: optionsError } = await supabase
+          .from('restaurant_order_item_options')
+          .select('*')
+          .in('order_item_id', itemIds);
+
+        if (optionsError) {
+          console.warn('Non-fatal error fetching options for order:', optionsError.message);
+        } else if (optionsData) {
+          (optionsData as DbRestaurantOrderItemOption[]).forEach((opt) => {
+            if (!optionsMap[opt.order_item_id]) {
+              optionsMap[opt.order_item_id] = [];
+            }
+            optionsMap[opt.order_item_id].push(opt);
+          });
+        }
+      } catch (optErr) {
+        console.warn('Unexpected error fetching item options:', optErr);
+      }
+    }
+
     const delivOrder = (delivRes.data as DbRestaurantDeliveryOrder) || null;
     let driverProf: { full_name?: string | null; phone?: string | null } | null = null;
     if (delivOrder?.driver_user_id) {
       try {
-        const { data: prof } = await supabase
+        const { data: prof, error: profError } = await supabase
           .from('profiles')
           .select('id, full_name, phone')
           .eq('id', delivOrder.driver_user_id)
           .maybeSingle();
-        if (prof) {
+
+        if (profError) {
+          console.warn('Could not fetch driver profile for single order:', profError.message);
+        } else if (prof) {
           driverProf = { full_name: prof.full_name, phone: prof.phone };
         }
       } catch (pErr) {
@@ -538,10 +612,11 @@ export async function fetchOrderDetails(
 
     const order = mapDbOrderToAppOrder(
       orderData as DbRestaurantOrder,
-      (itemsRes.data as DbRestaurantOrderItem[]) || [],
+      orderItemRows,
       (histRes.data as DbRestaurantOrderStatusHistory[]) || [],
       delivOrder,
-      driverProf
+      driverProf,
+      optionsMap
     );
 
     return { order, error: null };

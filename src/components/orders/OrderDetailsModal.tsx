@@ -673,6 +673,24 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
                             <span className="font-bold text-slate-900 text-xs">{item.name}</span>
                           </div>
 
+                          {/* خيارات وإضافات الصنف الفعلية */}
+                          {item.selectedOptions && item.selectedOptions.length > 0 && (
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {item.selectedOptions.map((opt, oIdx) => (
+                                <span
+                                  key={oIdx}
+                                  className="inline-flex items-center gap-1 text-[10px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md border border-slate-200"
+                                >
+                                  <span className="font-semibold">{opt.groupName}:</span>
+                                  <span>{opt.optionName}</span>
+                                  {opt.price > 0 && (
+                                    <span className="text-amber-700 font-mono font-medium">(+{opt.price} ج.م)</span>
+                                  )}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+
                           {item.itemDiscount > 0 && (
                             <span className="mt-1 inline-block text-[10px] text-rose-600 font-bold bg-rose-50 px-2 py-0.5 rounded">
                               خصم خاص: -{item.itemDiscount} ج.م

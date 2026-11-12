@@ -187,42 +187,47 @@ export const ItemModal: React.FC<ItemModalProps> = ({
     setError('');
     setUploadStatus('جارٍ تجهيز ومعالجة الصورة...');
 
-    // Attempt upload to Supabase storage bucket 'restaurant-items'
+    // رفع حقيقي ومباشر إلى Supabase Storage Bucket ('restaurant-items') بدون بدائل وهمية
     try {
-      if (isSupabaseConfigured) {
-        const fileExt = file.name.split('.').pop() || 'jpg';
-        const fileName = `item-${Date.now()}-${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
+      if (!isSupabaseConfigured) {
+        setError('إعدادات الاتصال بـ Supabase غير مهيأة.');
+        setUploadStatus(null);
+        return;
+      }
 
-        const { data, error: uploadErr } = await supabase.storage
+      const fileExt = file.name.split('.').pop() || 'jpg';
+      const fileName = `item-${Date.now()}-${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
+
+      const { data, error: uploadErr } = await supabase.storage
+        .from('restaurant-items')
+        .upload(fileName, file, { cacheControl: '3600', upsert: true });
+
+      if (uploadErr) {
+        console.error('Supabase storage upload error:', uploadErr);
+        setError(`فشل رفع الصورة: الـ bucket المطلوب ("restaurant-items") غير موجود في Supabase Storage أو غير مصرح بالرفع عليه (${uploadErr.message}).`);
+        setUploadStatus(null);
+        return;
+      }
+
+      if (data) {
+        const { data: pubData } = supabase.storage
           .from('restaurant-items')
-          .upload(fileName, file, { cacheControl: '3600', upsert: true });
+          .getPublicUrl(data.path);
 
-        if (!uploadErr && data) {
-          const { data: pubData } = supabase.storage
-            .from('restaurant-items')
-            .getPublicUrl(data.path);
-
-          if (pubData?.publicUrl) {
-            setImage(pubData.publicUrl);
-            setUploadStatus('تم رفع الصورة بنجاح إلى وسائط المتجر.');
-            return;
-          }
+        if (pubData?.publicUrl) {
+          setImage(pubData.publicUrl);
+          setUploadStatus('تم رفع الصورة بنجاح إلى وسائط المتجر.');
+          return;
         }
       }
-    } catch {
-      // Storage bucket not provisioned, fall back to FileReader Data URL
-    }
 
-    // Fallback: Read as Data URL for instant preview & persistence
-    const reader = new FileReader();
-    reader.onload = (uploadEvent) => {
-      const dataUrl = uploadEvent.target?.result as string;
-      if (dataUrl) {
-        setImage(dataUrl);
-        setUploadStatus('تم تحميل الصورة محليًا (ملاحظة: تخزين التخزين السحابي لـ Supabase يتطلب إنشاء bucket "restaurant-items").');
-      }
-    };
-    reader.readAsDataURL(file);
+      setError('تعذر الحصول على الرابط العام للصورة بعد رفعها.');
+      setUploadStatus(null);
+    } catch (err: any) {
+      console.error('Storage upload exception:', err);
+      setError(`خطأ أثناء رفع الصورة: ${err?.message || 'تعذر الاتصال بخدمة التخزين السحابي'}.`);
+      setUploadStatus(null);
+    }
   };
 
   // Add a new option group
