@@ -70,7 +70,7 @@ export async function fetchRestaurantOffers(
         id: row.id,
         title: row.title,
         description: row.description || '',
-        bannerImage: 'https://images.unsplash.com/photo-1555939594-58d7cb561ad1?w=1000&auto=format&fit=crop&q=80',
+        bannerImage: '',
         discountType: discType,
         discountValue: Number(row.discount_value || 0),
         appliesToItemIds: [], // لا يوجد جدول ربط للأصناف في مخطط restaurant_offers الحالي

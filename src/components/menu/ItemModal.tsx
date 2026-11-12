@@ -15,6 +15,7 @@ import {
   CheckCircle,
   Loader2,
   FolderOpen,
+  ImageOff,
 } from 'lucide-react';
 import { MenuItem, MenuCategory, OptionGroup, OptionItem } from '../../types';
 import { supabase, isSupabaseConfigured } from '../../services/supabase';
@@ -28,89 +29,6 @@ interface ItemModalProps {
   activeCategoryId?: string;
 }
 
-// كاتالوج صور أصناف المطاعم والمشويات والمأكولات المصرية المعتمد
-interface CatalogItem {
-  id: string;
-  title: string;
-  category: string;
-  url: string;
-}
-
-const FOOD_CATALOG: CatalogItem[] = [
-  {
-    id: 'tarb-kofta',
-    title: 'طرب ضاني وكفتة مشوية على الفحم',
-    category: 'مشويات',
-    url: 'https://images.unsplash.com/photo-1544025162-d76694265947?w=600&auto=format&fit=crop&q=80',
-  },
-  {
-    id: 'kebab-dani',
-    title: 'كباب بتلو وضاني مشوي متبل',
-    category: 'مشويات',
-    url: 'https://images.unsplash.com/photo-1555939594-58d7cb561ad1?w=600&auto=format&fit=crop&q=80',
-  },
-  {
-    id: 'grilled-chicken',
-    title: 'شيش طاووق وفراخ مشوية على الفحم',
-    category: 'مشويات',
-    url: 'https://images.unsplash.com/photo-1598515214211-89d3c73ae83b?w=600&auto=format&fit=crop&q=80',
-  },
-  {
-    id: 'hawawshi',
-    title: 'حواوشي بلدي على الفحم مع الجبن',
-    category: 'مشويات',
-    url: 'https://images.unsplash.com/photo-1628840042765-356cda07504e?w=600&auto=format&fit=crop&q=80',
-  },
-  {
-    id: 'tajin-meat',
-    title: 'طاجن لحمة بلدي بالبصل والبهارات',
-    category: 'طواجن',
-    url: 'https://images.unsplash.com/photo-1574484284002-952d92456975?w=600&auto=format&fit=crop&q=80',
-  },
-  {
-    id: 'rice-nuts',
-    title: 'أرز شرقي بالخلطة والمكسرات',
-    category: 'طواجن',
-    url: 'https://images.unsplash.com/photo-1536392706976-e486e2ba97af?w=600&auto=format&fit=crop&q=80',
-  },
-  {
-    id: 'molokhia',
-    title: 'ملوخية مصرية بالطشة البلدي',
-    category: 'طواجن',
-    url: 'https://images.unsplash.com/photo-1540420773420-3366772f4999?w=600&auto=format&fit=crop&q=80',
-  },
-  {
-    id: 'shawarma',
-    title: 'شاورما عربي بالثومية والمخلل',
-    category: 'ساندوتشات',
-    url: 'https://images.unsplash.com/photo-1529042410759-befb1204b468?w=600&auto=format&fit=crop&q=80',
-  },
-  {
-    id: 'burger',
-    title: 'برجر لحم مشوي على اللهب',
-    category: 'ساندوتشات',
-    url: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=600&auto=format&fit=crop&q=80',
-  },
-  {
-    id: 'salads',
-    title: 'سلطات مشكلة وطحينة ومقبلات',
-    category: 'مقبلات',
-    url: 'https://images.unsplash.com/photo-1541544741938-0af808871cc0?w=600&auto=format&fit=crop&q=80',
-  },
-  {
-    id: 'fries',
-    title: 'بطاطس محمرة كرسبي بالبهارات',
-    category: 'مقبلات',
-    url: 'https://images.unsplash.com/photo-1576107232684-1279f3908594?w=600&auto=format&fit=crop&q=80',
-  },
-  {
-    id: 'dessert',
-    title: 'حلويات شرقية مشكلة ومكسرات',
-    category: 'حلويات',
-    url: 'https://images.unsplash.com/photo-1587314168485-3236d6710814?w=600&auto=format&fit=crop&q=80',
-  },
-];
-
 export const ItemModal: React.FC<ItemModalProps> = ({
   isOpen,
   onClose,
@@ -123,16 +41,16 @@ export const ItemModal: React.FC<ItemModalProps> = ({
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState<number | ''>(120);
   const [categoryId, setCategoryId] = useState('');
-  const [image, setImage] = useState(FOOD_CATALOG[0].url);
+  const [image, setImage] = useState('');
   const [isAvailable, setIsAvailable] = useState(true);
   const [sortOrder, setSortOrder] = useState(1);
   const [optionGroups, setOptionGroups] = useState<OptionGroup[]>([]);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
 
-  // Image source mode: 'catalog' | 'upload' | 'url'
-  const [imageTab, setImageTab] = useState<'catalog' | 'upload' | 'url'>('catalog');
-  const [catalogFilter, setCatalogFilter] = useState('الكل');
+  // Image source mode: 'upload' | 'url'
+  const [imageTab, setImageTab] = useState<'upload' | 'url'>('upload');
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -145,7 +63,7 @@ export const ItemModal: React.FC<ItemModalProps> = ({
       setDescription(itemToEdit.description);
       setPrice(itemToEdit.price);
       setCategoryId(itemToEdit.categoryId);
-      setImage(itemToEdit.image);
+      setImage(itemToEdit.image || '');
       setIsAvailable(itemToEdit.isAvailable);
       setSortOrder(itemToEdit.sortOrder);
       setOptionGroups(itemToEdit.optionGroups || []);
@@ -154,13 +72,14 @@ export const ItemModal: React.FC<ItemModalProps> = ({
       setDescription('');
       setPrice(100);
       setCategoryId(activeCategoryId || categories[0]?.id || '');
-      setImage(FOOD_CATALOG[0].url);
+      setImage('');
       setIsAvailable(true);
       setSortOrder(1);
       setOptionGroups([]);
     }
     setError('');
     setIsSubmitting(false);
+    setIsUploading(false);
     setUploadStatus(null);
     setSelectedPreviewOptions({});
   }, [itemToEdit, isOpen, activeCategoryId, categories]);
@@ -171,27 +90,32 @@ export const ItemModal: React.FC<ItemModalProps> = ({
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (isUploading) return;
 
     // Validate type and size (max 5MB)
     const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
     if (!validTypes.includes(file.type)) {
       setError('صيغة الملف غير مدعومة. يرجى اختيار صورة بصيغة JPG أو PNG أو WebP.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
 
     if (file.size > 5 * 1024 * 1024) {
       setError('حجم الصورة كبير جدًا. الحد الأقصى المسموح به هو 5 ميجابايت.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
 
     setError('');
-    setUploadStatus('جارٍ تجهيز ومعالجة الصورة...');
+    setIsUploading(true);
+    setUploadStatus('جارٍ تجهيز ورفع الصورة إلى التخزين السحابي...');
 
     // رفع حقيقي ومباشر إلى Supabase Storage Bucket ('restaurant-items') بدون بدائل وهمية
     try {
       if (!isSupabaseConfigured) {
         setError('إعدادات الاتصال بـ Supabase غير مهيأة.');
         setUploadStatus(null);
+        setIsUploading(false);
         return;
       }
 
@@ -204,8 +128,9 @@ export const ItemModal: React.FC<ItemModalProps> = ({
 
       if (uploadErr) {
         console.error('Supabase storage upload error:', uploadErr);
-        setError(`فشل رفع الصورة: الـ bucket المطلوب ("restaurant-items") غير موجود في Supabase Storage أو غير مصرح بالرفع عليه (${uploadErr.message}).`);
+        setError(`فشل رفع الصورة: الـ bucket المطلوب ("restaurant-items") غير موجود في Supabase Storage أو غير مصرح بالرفع عليه (${uploadErr.message}). يرجى إنشاء الـ Bucket وضبط الصلاحيات.`);
         setUploadStatus(null);
+        setIsUploading(false);
         return;
       }
 
@@ -216,17 +141,22 @@ export const ItemModal: React.FC<ItemModalProps> = ({
 
         if (pubData?.publicUrl) {
           setImage(pubData.publicUrl);
-          setUploadStatus('تم رفع الصورة بنجاح إلى وسائط المتجر.');
+          setUploadStatus('تم رفع الصورة بنجاح وتعيين رابطها الفعلي للصنف.');
+          setIsUploading(false);
           return;
         }
       }
 
       setError('تعذر الحصول على الرابط العام للصورة بعد رفعها.');
       setUploadStatus(null);
+      setIsUploading(false);
     } catch (err: any) {
       console.error('Storage upload exception:', err);
       setError(`خطأ أثناء رفع الصورة: ${err?.message || 'تعذر الاتصال بخدمة التخزين السحابي'}.`);
       setUploadStatus(null);
+      setIsUploading(false);
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -358,7 +288,7 @@ export const ItemModal: React.FC<ItemModalProps> = ({
         name: name.trim(),
         description: description.trim(),
         price: Number(price),
-        image: image.trim() || FOOD_CATALOG[0].url,
+        image: image.trim(),
         isAvailable,
         sortOrder: Number(sortOrder),
         optionGroups,
@@ -375,11 +305,6 @@ export const ItemModal: React.FC<ItemModalProps> = ({
       setIsSubmitting(false);
     }
   };
-
-  const catalogCategories = ['الكل', 'مشويات', 'طواجن', 'ساندوتشات', 'مقبلات', 'حلويات'];
-  const filteredCatalog = catalogFilter === 'الكل'
-    ? FOOD_CATALOG
-    : FOOD_CATALOG.filter((item) => item.category === catalogFilter);
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5">
@@ -515,37 +440,26 @@ export const ItemModal: React.FC<ItemModalProps> = ({
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <ImageIcon className="w-4 h-4 text-amber-600" />
-                <span className="font-bold text-slate-800 text-xs">صورة الصنف (عمود image_url):</span>
+                <span className="font-bold text-slate-800 text-xs">صورة الصنف (عمود image_url في قاعدة البيانات):</span>
               </div>
 
               {/* Tabs */}
               <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-slate-200 text-[11px]">
                 <button
                   type="button"
-                  onClick={() => setImageTab('catalog')}
-                  className={`px-2.5 py-1 rounded-lg font-bold transition-colors ${
-                    imageTab === 'catalog'
-                      ? 'bg-amber-500 text-slate-950 shadow-2xs'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  الكاتالوج الجاهز
-                </button>
-                <button
-                  type="button"
                   onClick={() => setImageTab('upload')}
-                  className={`px-2.5 py-1 rounded-lg font-bold transition-colors ${
+                  className={`px-3 py-1 rounded-lg font-bold transition-colors ${
                     imageTab === 'upload'
                       ? 'bg-amber-500 text-slate-950 shadow-2xs'
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
-                  رفع صورة
+                  رفع صورة للمتجر
                 </button>
                 <button
                   type="button"
                   onClick={() => setImageTab('url')}
-                  className={`px-2.5 py-1 rounded-lg font-bold transition-colors ${
+                  className={`px-3 py-1 rounded-lg font-bold transition-colors ${
                     imageTab === 'url'
                       ? 'bg-amber-500 text-slate-950 shadow-2xs'
                       : 'text-slate-600 hover:text-slate-900'
@@ -557,85 +471,53 @@ export const ItemModal: React.FC<ItemModalProps> = ({
             </div>
 
             {/* Current Image Preview */}
-            <div className="flex items-center gap-3 p-2 bg-white rounded-xl border border-slate-200">
-              <img
-                src={image}
-                alt="معاينة الصنف"
-                className="w-16 h-16 rounded-xl object-cover shrink-0 border border-slate-200 shadow-2xs"
-              />
-              <div className="flex-1 min-w-0">
-                <span className="text-[10px] text-slate-400 block">الصورة المختارة حاليًا:</span>
-                <p className="text-xs font-bold text-slate-800 truncate" dir="ltr">
-                  {image}
-                </p>
-                {uploadStatus && (
-                  <span className="text-[11px] text-emerald-600 font-bold block mt-0.5">
-                    {uploadStatus}
-                  </span>
-                )}
-              </div>
+            <div className="flex items-center gap-3 p-3 bg-white rounded-xl border border-slate-200">
+              {image ? (
+                <>
+                  <img
+                    src={image}
+                    alt="معاينة الصنف"
+                    className="w-16 h-16 rounded-xl object-cover shrink-0 border border-slate-200 shadow-2xs"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <span className="text-[10px] text-slate-400 block">الصورة المختارة حاليًا:</span>
+                    <p className="text-xs font-bold text-slate-800 truncate" dir="ltr">
+                      {image}
+                    </p>
+                    {uploadStatus && (
+                      <span className="text-[11px] text-emerald-600 font-bold block mt-0.5">
+                        {uploadStatus}
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setImage('');
+                      setUploadStatus(null);
+                    }}
+                    className="px-2.5 py-1 text-rose-600 hover:text-rose-700 hover:bg-rose-50 rounded-lg font-bold text-[11px] border border-rose-200 shrink-0 cursor-pointer"
+                  >
+                    إزالة الصورة
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div className="w-16 h-16 rounded-xl bg-slate-100 flex flex-col items-center justify-center text-slate-400 border border-slate-200 shrink-0">
+                    <ImageOff className="w-6 h-6 text-slate-300 stroke-[1.5]" />
+                    <span className="text-[9px] text-slate-400 mt-1">بدون صورة</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <span className="text-[11px] font-bold text-slate-700 block">لا توجد صورة مسجلة لهذا الصنف</span>
+                    <p className="text-[10px] text-slate-400 mt-0.5">
+                      يمكنك رفع صورة من جهازك، أو إدخال رابط مباشر، أو حفظ الصنف بدون صورة.
+                    </p>
+                  </div>
+                </>
+              )}
             </div>
 
-            {/* Tab 1: Catalog */}
-            {imageTab === 'catalog' && (
-              <div className="space-y-2 pt-1">
-                {/* Filter Pills */}
-                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-[11px]">
-                  {catalogCategories.map((cat) => (
-                    <button
-                      key={cat}
-                      type="button"
-                      onClick={() => setCatalogFilter(cat)}
-                      className={`px-2.5 py-0.5 rounded-lg font-bold shrink-0 transition-colors ${
-                        catalogFilter === cat
-                          ? 'bg-slate-900 text-white'
-                          : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
-                      }`}
-                    >
-                      {cat}
-                    </button>
-                  ))}
-                </div>
-
-                {/* Grid */}
-                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-48 overflow-y-auto p-1 bg-white rounded-xl border border-slate-200">
-                  {filteredCatalog.map((item) => {
-                    const isSelected = image === item.url;
-                    return (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() => {
-                          setImage(item.url);
-                          setUploadStatus(null);
-                        }}
-                        className={`group relative rounded-xl overflow-hidden border-2 transition-all p-1 flex flex-col items-center text-center ${
-                          isSelected
-                            ? 'border-amber-500 bg-amber-50 ring-2 ring-amber-400/50'
-                            : 'border-slate-100 hover:border-slate-300 bg-slate-50'
-                        }`}
-                      >
-                        <img
-                          src={item.url}
-                          alt={item.title}
-                          className="w-full h-16 object-cover rounded-lg mb-1"
-                        />
-                        <span className="text-[10px] font-bold text-slate-800 line-clamp-1">
-                          {item.title}
-                        </span>
-                        {isSelected && (
-                          <div className="absolute top-2 left-2 bg-amber-500 text-slate-950 p-0.5 rounded-full shadow-xs">
-                            <Check className="w-3 h-3" />
-                          </div>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Tab 2: Upload */}
+            {/* Tab 1: Upload */}
             {imageTab === 'upload' && (
               <div className="p-4 bg-white rounded-xl border border-dashed border-slate-300 text-center space-y-2">
                 <input
@@ -644,27 +526,39 @@ export const ItemModal: React.FC<ItemModalProps> = ({
                   accept="image/jpeg,image/png,image/webp"
                   className="hidden"
                   onChange={handleFileUpload}
+                  disabled={isUploading}
                 />
                 <Upload className="w-8 h-8 text-amber-500 mx-auto" />
                 <div>
                   <button
                     type="button"
+                    disabled={isUploading}
                     onClick={() => fileInputRef.current?.click()}
-                    className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl text-xs inline-flex items-center gap-1.5 cursor-pointer shadow-xs"
+                    className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl text-xs inline-flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
                   >
-                    <FolderOpen className="w-4 h-4" />
-                    <span>اختيار صورة من جهازك</span>
+                    {isUploading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>جارٍ رفع الصورة...</span>
+                      </>
+                    ) : (
+                      <>
+                        <FolderOpen className="w-4 h-4" />
+                        <span>اختيار صورة من جهازك للرفع</span>
+                      </>
+                    )}
                   </button>
                   <p className="text-[11px] text-slate-400 mt-1.5">
-                    الصيغ المدعومة: JPG، PNG، WebP (الحد الأقصى: 5 ميجابايت)
+                    الصيغ المدعومة: JPG، PNG، WebP (الحد الأقصى: 5 ميجابايت) — يتطلب تهيئة bucket "restaurant-items" في Supabase Storage
                   </p>
                 </div>
               </div>
             )}
 
-            {/* Tab 3: URL */}
+            {/* Tab 2: URL */}
             {imageTab === 'url' && (
-              <div>
+              <div className="space-y-1">
+                <label className="block text-[11px] font-bold text-slate-600">رابط صورة مباشر عبر الإنترنت (HTTPS):</label>
                 <input
                   type="url"
                   value={image}
@@ -672,7 +566,7 @@ export const ItemModal: React.FC<ItemModalProps> = ({
                     setImage(e.target.value);
                     setUploadStatus(null);
                   }}
-                  placeholder="https://..."
+                  placeholder="https://example.com/item.jpg"
                   className="w-full px-3.5 py-2 bg-white border border-slate-200 rounded-xl text-xs text-left dir-ltr focus:ring-2 focus:ring-amber-500"
                 />
               </div>

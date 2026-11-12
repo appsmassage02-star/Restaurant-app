@@ -422,36 +422,55 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
               <div className="flex items-center gap-2 text-rose-900 font-black text-sm">
                 <ShieldAlert className="w-5 h-5 text-rose-600 animate-bounce" />
                 <span>
-                  تنبيه هام: ورد طلب لإلغاء هذا الأوردر من{' '}
-                  {pendingCancel.requested_by_role === 'driver'
-                    ? 'مندوب التوصيل (الطيار)'
-                    : pendingCancel.requested_by_role === 'restaurant'
-                    ? 'إدارة المطعم'
-                    : 'العميل'}
+                  {pendingCancel.requested_by_role === 'restaurant'
+                    ? 'تنبيه: يوجد طلب إلغاء لهذا الأوردر مرسل من قِبل المطعم'
+                    : pendingCancel.requested_by_role === 'driver'
+                    ? 'تنبيه: ورد طلب لإلغاء هذا الأوردر من مندوب التوصيل (الطيار)'
+                    : pendingCancel.requested_by_role === 'customer'
+                    ? 'تنبيه هام: ورد طلب لإلغاء هذا الأوردر من العميل'
+                    : 'تنبيه: ورد طلب لإلغاء هذا الأوردر (مصدر الطلب غير متاح)'}
                   !
                 </span>
               </div>
+
               <p className="text-xs text-rose-800 bg-white/70 p-2.5 rounded-xl border border-rose-200">
                 <span className="font-bold">
-                  سبب الإلغاء المذكور (
-                  {pendingCancel.requested_by_role === 'driver'
-                    ? 'من الطيار'
-                    : pendingCancel.requested_by_role === 'restaurant'
-                    ? 'من المطعم'
-                    : 'من العميل'}
-                  ):{' '}
+                  سبب الإلغاء المذكور{' '}
+                  {pendingCancel.requested_by_role === 'restaurant'
+                    ? '(من المطعم)'
+                    : pendingCancel.requested_by_role === 'driver'
+                    ? '(من الطيار)'
+                    : pendingCancel.requested_by_role === 'customer'
+                    ? '(من العميل)'
+                    : '(المصدر غير محدد)'}
+                  :{' '}
                 </span>
                 <span>{pendingCancel.reason}</span>
               </p>
 
+              {/* إذا كان المطعم هو مقدم الطلب: منع البت الذاتي */}
               {pendingCancel.requested_by_role === 'restaurant' ? (
-                <div className="p-2.5 bg-amber-50 text-amber-900 rounded-xl border border-amber-200 font-medium text-xs">
+                <div className="p-3 bg-amber-50 text-amber-900 rounded-xl border border-amber-200 font-medium text-xs leading-relaxed">
                   طلب الإلغاء تم إرساله من قِبل المطعم وهو قيد مراجعة واعتماد الإدارة أو العميل وفق دورة العمل المعتمدة ولا يمكن للمطعم البت فيه ذاتياً.
                 </div>
+              ) : pendingCancel.requested_by_role === 'unknown' ? (
+                /* إذا كان المصدر غير محدد: حظر أزرار القرار لحماية دورة العمل */
+                <div className="p-3 bg-slate-100 text-slate-800 rounded-xl border border-slate-300 font-medium text-xs leading-relaxed space-y-1">
+                  <div className="font-bold text-slate-900">مصدر طلب الإلغاء غير متاح في بيانات المنظومة:</div>
+                  <p className="text-[11px] text-slate-600">
+                    تم إيقاف أزرار الموافقة والرفض لحماية دورة العمل؛ حيث لا يمكن اتخاذ قرار إلغاء دون التحقق من هوية مقدم الطلب وصلاحية المطعم في البت فيه. يلزم تحديث دالة RPC في قاعدة البيانات لإرجاع هوية ودور مقدم الطلب.
+                  </p>
+                </div>
+              ) : pendingCancel.requested_by_role === 'driver' ? (
+                /* إذا كان الطلب من الطيار: يتطلب مراجعة الإدارة */
+                <div className="p-3 bg-blue-50 text-blue-900 rounded-xl border border-blue-200 font-medium text-xs leading-relaxed">
+                  طلب الإلغاء مقدم من كابتن التوصيل (الطيار) وهو قيد مراجعة واعتماد الإدارة وفق دورة العمل المعتمدة.
+                </div>
               ) : showCancelRejectDialog ? (
+                /* يظهر هذا الخيار فقط وفقط عندما يكون مقدم الطلب عميلاً مؤكداً */
                 <div className="space-y-2 pt-1 bg-white p-3 rounded-xl border border-rose-200">
                   <label className="block font-bold text-slate-800 text-xs">
-                    سبب رفض إلغاء الطلب (سيظهر لمقدم الطلب) *
+                    سبب رفض إلغاء الطلب (سيظهر للعميل) *
                   </label>
                   <input
                     type="text"
@@ -479,6 +498,7 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
                   </div>
                 </div>
               ) : (
+                /* تظهر أزرار الموافقة والرفض فقط إذا كان الطلب من العميل بصورة مؤكدة */
                 <div className="flex items-center gap-2 justify-end pt-1">
                   <button
                     onClick={() => setShowCancelRejectDialog(true)}

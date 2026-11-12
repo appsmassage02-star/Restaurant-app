@@ -348,6 +348,32 @@ export async function setRestaurantDeliveryEnabled(
   }
 }
 
+const RESTAURANT_CANCELLED_ORDERS_KEY = 'talabat_restaurant_cancelled_orders';
+
+export function getRestaurantCancelledOrderIds(): Set<string> {
+  try {
+    const raw = typeof window !== 'undefined' ? window.sessionStorage?.getItem(RESTAURANT_CANCELLED_ORDERS_KEY) : null;
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) return new Set(arr);
+    }
+  } catch {
+    // ignore
+  }
+  return new Set();
+}
+
+export function recordRestaurantCancelledOrderId(orderId: string) {
+  try {
+    if (typeof window === 'undefined') return;
+    const set = getRestaurantCancelledOrderIds();
+    set.add(orderId);
+    window.sessionStorage?.setItem(RESTAURANT_CANCELLED_ORDERS_KEY, JSON.stringify(Array.from(set)));
+  } catch {
+    // ignore
+  }
+}
+
 /**
  * إرسال طلب إلغاء طلب من قِبل المطعم
  * يستدعي الإجراء المخزن: restaurant_request_order_cancellation
@@ -382,6 +408,9 @@ export async function requestOrderCancellation(
       };
     }
 
+    // تسجيل معرف الطلب كطلب تم إلغاؤه من قِبل المطعم في الجلسة لمنع الموافقة الذاتية لاحقاً
+    recordRestaurantCancelledOrderId(orderId);
+
     return { success: true, data };
   } catch (err: any) {
     console.error('Unexpected error in requestOrderCancellation:', err);
@@ -394,6 +423,7 @@ export async function requestOrderCancellation(
 
 /**
  * جلب قائمة طلبات الإلغاء المعلقة (من العملاء أو السائقين أو المطعم)
+ * لا نفترض أي أدوار وهمية ولا نصنف الطلب كعميل افتراضياً إذا كانت هوية المصدر مجهولة
  */
 export async function listPendingCancellations(): Promise<
   ServiceOperationResult<DbPendingCancellation[]>
@@ -403,6 +433,7 @@ export async function listPendingCancellations(): Promise<
   }
 
   try {
+    // 1. استدعاء الدالة المعتمدة
     const { data, error } = await supabase.rpc('restaurant_list_pending_cancellations');
 
     if (error) {
@@ -414,34 +445,82 @@ export async function listPendingCancellations(): Promise<
       };
     }
 
-    const requests: DbPendingCancellation[] = Array.isArray(data)
-      ? data.map((row: any) => {
-          // استنتاج مصدر طلب الإلغاء بدقة (عميل، طيار، أو مطعم)
-          const rawRole = (row.requested_by_role || row.requester_role || row.role || '').toLowerCase();
-          const reqBy = String(row.requested_by || '').toLowerCase();
+    const rawRows = Array.isArray(data) ? data : [];
+    if (rawRows.length === 0) {
+      return { success: true, data: [] };
+    }
 
-          let role: 'customer' | 'driver' | 'restaurant' = 'customer';
-          if (rawRole.includes('driver') || reqBy.includes('driver') || row.is_driver) {
-            role = 'driver';
-          } else if (rawRole.includes('restaurant') || reqBy.includes('restaurant') || row.is_restaurant) {
-            role = 'restaurant';
-          } else {
-            role = 'customer';
-          }
+    // 2. التحقق من هوية المستخدم الحالي المصادق عليه (المطعم)
+    let currentUserId: string | null = null;
+    try {
+      const { data: authData } = await supabase.auth.getUser();
+      currentUserId = authData?.user?.id || null;
+    } catch (authErr) {
+      console.warn('Could not get current auth user in listPendingCancellations:', authErr);
+    }
 
-          return {
-            id: String(row.id || row.request_id || ''),
-            order_id: String(row.order_id || ''),
-            order_number: row.order_number ? String(row.order_number) : undefined,
-            customer_name: row.customer_name || 'عميل',
-            requested_by: row.requested_by || null,
-            requested_by_role: role,
-            reason: row.reason || row.cancellation_reason || 'طلب إلغاء الأوردر',
-            created_at: row.created_at || new Date().toISOString(),
-            status: row.status || 'pending',
-          };
-        })
-      : [];
+    // 3. التحقق من جدول restaurant_order_cancellation_requests مباشرة إن سمحت صلاحيات RLS
+    const cancellationIds = rawRows.map((r: any) => r.id || r.request_id).filter(Boolean);
+    let tableMap: Record<string, { requested_by?: string | null }> = {};
+    if (cancellationIds.length > 0) {
+      try {
+        const { data: tableData, error: tableErr } = await supabase
+          .from('restaurant_order_cancellation_requests')
+          .select('id, requested_by')
+          .in('id', cancellationIds);
+
+        if (!tableErr && tableData) {
+          tableData.forEach((row: any) => {
+            tableMap[row.id] = row;
+          });
+        } else if (tableErr) {
+          console.warn('Non-fatal: RLS prevented direct select on restaurant_order_cancellation_requests:', tableErr.message);
+        }
+      } catch (tErr) {
+        console.warn('Non-fatal: exception querying cancellation requests table:', tErr);
+      }
+    }
+
+    const localRestaurantCancels = getRestaurantCancelledOrderIds();
+
+    // 4. مطابقة وتحديد دور مقدم الطلب بدقة وموثوقية ودون افتراضات
+    const requests: DbPendingCancellation[] = rawRows.map((row: any) => {
+      const reqId = String(row.id || row.request_id || '');
+      const ordId = String(row.order_id || '');
+      const tableRecord = tableMap[reqId];
+      const actualRequestedBy = row.requested_by || tableRecord?.requested_by || null;
+
+      let role: 'customer' | 'driver' | 'restaurant' | 'unknown' = 'unknown';
+
+      // الحالة أ: الطلب أرسله هذا المطعم في الجلسة الحالية
+      if (localRestaurantCancels.has(ordId)) {
+        role = 'restaurant';
+      }
+      // الحالة ب: معرف مقدم الطلب يطابق معرف المستخدم الحالي المصادق عليه
+      else if (currentUserId && actualRequestedBy && currentUserId === actualRequestedBy) {
+        role = 'restaurant';
+      }
+      // الحالة ج: الدالة رجعت صراحة دوراً معلوماً وموثقاً في الحقل
+      else if (row.requested_by_role === 'customer' || row.requested_by_role === 'driver' || row.requested_by_role === 'restaurant') {
+        role = row.requested_by_role;
+      }
+      // الحالة د: مصدر الطلب غير متاح في RPC وغير قابل للتحقق عبر RLS -> unknown (لا نجعله customer أبدًا)
+      else {
+        role = 'unknown';
+      }
+
+      return {
+        id: reqId,
+        order_id: ordId,
+        order_number: row.order_number ? String(row.order_number) : undefined,
+        customer_name: row.customer_name || 'عميل',
+        requested_by: actualRequestedBy,
+        requested_by_role: role,
+        reason: row.reason || row.cancellation_reason || 'طلب إلغاء الأوردر',
+        created_at: row.created_at || new Date().toISOString(),
+        status: row.status || 'pending',
+      };
+    });
 
     return { success: true, data: requests };
   } catch (err: any) {

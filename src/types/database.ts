@@ -232,7 +232,7 @@ export interface DbPendingCancellation {
   order_number?: string | number;
   customer_name?: string;
   requested_by?: string | null;
-  requested_by_role?: 'customer' | 'driver' | 'restaurant' | string;
+  requested_by_role?: 'customer' | 'driver' | 'restaurant' | 'unknown' | string;
   reason: string;
   created_at: string;
   status?: string;

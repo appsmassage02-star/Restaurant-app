@@ -16,6 +16,7 @@ import {
   RefreshCw,
   Tag,
   ShieldCheck,
+  ImageOff,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { MenuCategory, MenuItem } from '../../types';
@@ -365,11 +366,18 @@ export const MenuView: React.FC = () => {
               <div>
                 {/* Image and badges */}
                 <div className="relative h-36 bg-slate-100 overflow-hidden">
-                  <img
-                    src={item.image}
-                    alt={item.name}
-                    className="w-full h-full object-cover"
-                  />
+                  {item.image ? (
+                    <img
+                      src={item.image}
+                      alt={item.name}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex flex-col items-center justify-center bg-slate-100 text-slate-400 gap-1.5 p-3 text-center">
+                      <ImageOff className="w-7 h-7 text-slate-300 stroke-[1.5]" />
+                      <span className="text-[10px] font-bold text-slate-400">لا توجد صورة مسجلة</span>
+                    </div>
+                  )}
                   {!item.isAvailable && (
                     <div className="absolute inset-0 bg-slate-950/60 backdrop-blur-2xs flex items-center justify-center">
                       <span className="bg-rose-600 text-white font-bold text-xs px-3 py-1 rounded-full shadow-xs">

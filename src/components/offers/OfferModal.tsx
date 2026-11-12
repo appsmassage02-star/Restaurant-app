@@ -30,9 +30,7 @@ export const OfferModal: React.FC<OfferModalProps> = ({
 }) => {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [bannerImage, setBannerImage] = useState(
-    'https://images.unsplash.com/photo-1555939594-58d7cb561ad1?w=1000&auto=format&fit=crop&q=80'
-  );
+  const [bannerImage, setBannerImage] = useState('');
   const [discountType, setDiscountType] = useState<DiscountType>('PERCENTAGE');
   const [discountValue, setDiscountValue] = useState<number | ''>(15);
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
@@ -48,7 +46,7 @@ export const OfferModal: React.FC<OfferModalProps> = ({
     if (offerToEdit) {
       setTitle(offerToEdit.title);
       setDescription(offerToEdit.description);
-      setBannerImage(offerToEdit.bannerImage);
+      setBannerImage(offerToEdit.bannerImage || '');
       setDiscountType(offerToEdit.discountType);
       setDiscountValue(offerToEdit.discountValue);
       setStartDate(offerToEdit.startDate || new Date().toISOString().split('T')[0]);
@@ -61,7 +59,7 @@ export const OfferModal: React.FC<OfferModalProps> = ({
     } else {
       setTitle('');
       setDescription('');
-      setBannerImage('https://images.unsplash.com/photo-1555939594-58d7cb561ad1?w=1000&auto=format&fit=crop&q=80');
+      setBannerImage('');
       setDiscountType('PERCENTAGE');
       setDiscountValue(15);
       setStartDate(new Date().toISOString().split('T')[0]);
@@ -98,7 +96,7 @@ export const OfferModal: React.FC<OfferModalProps> = ({
       const res = await onSave({
         title: title.trim(),
         description: description.trim(),
-        bannerImage: bannerImage.trim() || 'https://images.unsplash.com/photo-1555939594-58d7cb561ad1?w=1000&auto=format&fit=crop&q=80',
+        bannerImage: bannerImage.trim(),
         discountType,
         discountValue: Number(discountValue),
         appliesToItemIds: [],
