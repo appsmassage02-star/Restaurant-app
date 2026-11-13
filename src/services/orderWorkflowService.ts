@@ -348,32 +348,6 @@ export async function setRestaurantDeliveryEnabled(
   }
 }
 
-const RESTAURANT_CANCELLED_ORDERS_KEY = 'talabat_restaurant_cancelled_orders';
-
-export function getRestaurantCancelledOrderIds(): Set<string> {
-  try {
-    const raw = typeof window !== 'undefined' ? window.sessionStorage?.getItem(RESTAURANT_CANCELLED_ORDERS_KEY) : null;
-    if (raw) {
-      const arr = JSON.parse(raw);
-      if (Array.isArray(arr)) return new Set(arr);
-    }
-  } catch {
-    // ignore
-  }
-  return new Set();
-}
-
-export function recordRestaurantCancelledOrderId(orderId: string) {
-  try {
-    if (typeof window === 'undefined') return;
-    const set = getRestaurantCancelledOrderIds();
-    set.add(orderId);
-    window.sessionStorage?.setItem(RESTAURANT_CANCELLED_ORDERS_KEY, JSON.stringify(Array.from(set)));
-  } catch {
-    // ignore
-  }
-}
-
 /**
  * إرسال طلب إلغاء طلب من قِبل المطعم
  * يستدعي الإجراء المخزن: restaurant_request_order_cancellation
@@ -408,8 +382,12 @@ export async function requestOrderCancellation(
       };
     }
 
-    // تسجيل معرف الطلب كطلب تم إلغاؤه من قِبل المطعم في الجلسة لمنع الموافقة الذاتية لاحقاً
-    recordRestaurantCancelledOrderId(orderId);
+    if (data && typeof data === 'object' && (data as any).success === false) {
+      return {
+        success: false,
+        error: (data as any).message || 'رفضت قاعدة البيانات طلب الإلغاء.',
+      };
+    }
 
     return { success: true, data };
   } catch (err: any) {
@@ -421,9 +399,94 @@ export async function requestOrderCancellation(
   }
 }
 
+const FINAL_ORDER_STATUSES = new Set([
+  'delivered',
+  'completed',
+  'cancelled',
+  'rejected',
+]);
+
+export function normalizeRequesterRole(
+  rawRole: unknown
+): 'customer' | 'driver' | 'restaurant' | 'admin' | 'unknown' {
+  if (typeof rawRole !== 'string') return 'unknown';
+  const normalized = rawRole.trim().toLowerCase();
+  if (
+    normalized === 'customer' ||
+    normalized === 'driver' ||
+    normalized === 'restaurant' ||
+    normalized === 'admin'
+  ) {
+    return normalized;
+  }
+  return 'unknown';
+}
+
+export interface CancellationAuthorityInput {
+  fulfillmentRoute?: string | null;
+  requestedByRole: 'customer' | 'driver' | 'restaurant' | 'admin' | 'unknown';
+  requestedBy?: string | null;
+  currentUserId?: string | null;
+  orderStatus?: string | null;
+  requestStatus?: string | null;
+  rpcCanRestaurantDecide?: boolean | null;
+}
+
+/**
+ * تقييم صلاحية المطعم في البت في طلب الإلغاء وفق سياسة المسارات المعتمدة:
+ * - مسار restaurant_delivery: يملك المطعم صلاحية البت فقط إذا لم يكن هو مقدم الطلب ولم يكن المصدر مجهولاً والطلب ليس في حالة نهائية.
+ * - مسار driver_delivery: لا يملك المطعم أي صلاحية للبت (يتولى السائق قبل تأكيد الاتصال الهاتفي وبدء التحضير، ثم الإدارة).
+ */
+export function evaluateRestaurantCancellationAuthority(
+  input: CancellationAuthorityInput
+): boolean {
+  if ((input.requestStatus || 'pending').toLowerCase() !== 'pending') {
+    return false;
+  }
+
+  const normalizedOrderStatus = (input.orderStatus || '').toLowerCase().trim();
+  if (normalizedOrderStatus && FINAL_ORDER_STATUSES.has(normalizedOrderStatus)) {
+    return false;
+  }
+
+  if (input.rpcCanRestaurantDecide === false) {
+    return false;
+  }
+
+  const route = (input.fulfillmentRoute || '').toLowerCase().trim();
+  if (route !== 'restaurant_delivery') {
+    return false;
+  }
+
+  if (
+    input.currentUserId &&
+    input.requestedBy &&
+    input.currentUserId === input.requestedBy
+  ) {
+    return false;
+  }
+
+  if (
+    input.requestedByRole === 'restaurant' ||
+    input.requestedByRole === 'unknown'
+  ) {
+    return false;
+  }
+
+  if (typeof input.rpcCanRestaurantDecide === 'boolean') {
+    return input.rpcCanRestaurantDecide;
+  }
+
+  return (
+    input.requestedByRole === 'customer' ||
+    input.requestedByRole === 'driver' ||
+    input.requestedByRole === 'admin'
+  );
+}
+
 /**
  * جلب قائمة طلبات الإلغاء المعلقة (من العملاء أو السائقين أو المطعم)
- * لا نفترض أي أدوار وهمية ولا نصنف الطلب كعميل افتراضياً إذا كانت هوية المصدر مجهولة
+ * يعتمد حصرياً على بيانات قاعدة البيانات الفعلية دون أي sessionStorage أو تخمين أدوار.
  */
 export async function listPendingCancellations(): Promise<
   ServiceOperationResult<DbPendingCancellation[]>
@@ -433,7 +496,6 @@ export async function listPendingCancellations(): Promise<
   }
 
   try {
-    // 1. استدعاء الدالة المعتمدة
     const { data, error } = await supabase.rpc('restaurant_list_pending_cancellations');
 
     if (error) {
@@ -450,7 +512,6 @@ export async function listPendingCancellations(): Promise<
       return { success: true, data: [] };
     }
 
-    // 2. التحقق من هوية المستخدم الحالي المصادق عليه (المطعم)
     let currentUserId: string | null = null;
     try {
       const { data: authData } = await supabase.auth.getUser();
@@ -459,66 +520,114 @@ export async function listPendingCancellations(): Promise<
       console.warn('Could not get current auth user in listPendingCancellations:', authErr);
     }
 
-    // 3. التحقق من جدول restaurant_order_cancellation_requests مباشرة إن سمحت صلاحيات RLS
-    const cancellationIds = rawRows.map((r: any) => r.id || r.request_id).filter(Boolean);
+    // قراءة مساعدة من الجدول فقط إذا لم تُرجع الدالة بعض الحقول المرجعية (مع احترام RLS دون تخمين)
+    const missingRequestedByIds = rawRows
+      .filter((r: any) => !r.requested_by && (r.id || r.request_id))
+      .map((r: any) => String(r.id || r.request_id));
+
     let tableMap: Record<string, { requested_by?: string | null }> = {};
-    if (cancellationIds.length > 0) {
+    if (missingRequestedByIds.length > 0) {
       try {
         const { data: tableData, error: tableErr } = await supabase
           .from('restaurant_order_cancellation_requests')
           .select('id, requested_by')
-          .in('id', cancellationIds);
+          .in('id', missingRequestedByIds);
 
         if (!tableErr && tableData) {
           tableData.forEach((row: any) => {
-            tableMap[row.id] = row;
+            tableMap[String(row.id)] = row;
           });
-        } else if (tableErr) {
-          console.warn('Non-fatal: RLS prevented direct select on restaurant_order_cancellation_requests:', tableErr.message);
         }
       } catch (tErr) {
         console.warn('Non-fatal: exception querying cancellation requests table:', tErr);
       }
     }
 
-    const localRestaurantCancels = getRestaurantCancelledOrderIds();
+    const orderIdsNeedingRoute = rawRows
+      .filter((r: any) => !r.fulfillment_route && r.order_id)
+      .map((r: any) => String(r.order_id));
 
-    // 4. مطابقة وتحديد دور مقدم الطلب بدقة وموثوقية ودون افتراضات
+    let orderMetaMap: Record<
+      string,
+      { fulfillment_route?: string | null; status?: string | null; customer_user_id?: string | null }
+    > = {};
+    if (orderIdsNeedingRoute.length > 0) {
+      try {
+        const { data: ordersMeta, error: ordersMetaErr } = await supabase
+          .from('restaurant_orders')
+          .select('id, fulfillment_route, status, customer_user_id')
+          .in('id', orderIdsNeedingRoute);
+
+        if (!ordersMetaErr && ordersMeta) {
+          ordersMeta.forEach((ord: any) => {
+            orderMetaMap[String(ord.id)] = ord;
+          });
+        }
+      } catch (oErr) {
+        console.warn('Non-fatal: exception querying order routes for cancellations:', oErr);
+      }
+    }
+
     const requests: DbPendingCancellation[] = rawRows.map((row: any) => {
       const reqId = String(row.id || row.request_id || '');
       const ordId = String(row.order_id || '');
       const tableRecord = tableMap[reqId];
-      const actualRequestedBy = row.requested_by || tableRecord?.requested_by || null;
+      const orderMeta = orderMetaMap[ordId];
 
-      let role: 'customer' | 'driver' | 'restaurant' | 'unknown' = 'unknown';
+      const actualRequestedBy: string | null =
+        row.requested_by ?? tableRecord?.requested_by ?? null;
 
-      // الحالة أ: الطلب أرسله هذا المطعم في الجلسة الحالية
-      if (localRestaurantCancels.has(ordId)) {
+      let role = normalizeRequesterRole(row.requested_by_role ?? row.requester_type);
+
+      // إذا طابق requested_by حساب صاحب المطعم المصادق عليه حالياً
+      if (currentUserId && actualRequestedBy && currentUserId === actualRequestedBy) {
         role = 'restaurant';
+      } else if (
+        role === 'unknown' &&
+        actualRequestedBy &&
+        orderMeta?.customer_user_id &&
+        actualRequestedBy === orderMeta.customer_user_id
+      ) {
+        role = 'customer';
       }
-      // الحالة ب: معرف مقدم الطلب يطابق معرف المستخدم الحالي المصادق عليه
-      else if (currentUserId && actualRequestedBy && currentUserId === actualRequestedBy) {
-        role = 'restaurant';
-      }
-      // الحالة ج: الدالة رجعت صراحة دوراً معلوماً وموثقاً في الحقل
-      else if (row.requested_by_role === 'customer' || row.requested_by_role === 'driver' || row.requested_by_role === 'restaurant') {
-        role = row.requested_by_role;
-      }
-      // الحالة د: مصدر الطلب غير متاح في RPC وغير قابل للتحقق عبر RLS -> unknown (لا نجعله customer أبدًا)
-      else {
-        role = 'unknown';
-      }
+
+      const fulfillmentRoute: string | null =
+        row.fulfillment_route ?? orderMeta?.fulfillment_route ?? null;
+      const orderStatus: string | null =
+        row.order_status ?? orderMeta?.status ?? null;
+      const reqStatus: string = row.status || 'pending';
+
+      const rpcCanDecide =
+        typeof row.can_restaurant_decide === 'boolean'
+          ? row.can_restaurant_decide
+          : null;
+
+      const canDecide = evaluateRestaurantCancellationAuthority({
+        fulfillmentRoute,
+        requestedByRole: role,
+        requestedBy: actualRequestedBy,
+        currentUserId,
+        orderStatus,
+        requestStatus: reqStatus,
+        rpcCanRestaurantDecide: rpcCanDecide,
+      });
 
       return {
         id: reqId,
+        request_id: row.request_id ? String(row.request_id) : reqId,
         order_id: ordId,
         order_number: row.order_number ? String(row.order_number) : undefined,
         customer_name: row.customer_name || 'عميل',
         requested_by: actualRequestedBy,
         requested_by_role: role,
+        fulfillment_route: fulfillmentRoute,
+        order_status: orderStatus,
+        driver_user_id: row.driver_user_id ?? null,
+        restaurant_phone_confirmed_at: row.restaurant_phone_confirmed_at ?? null,
+        can_restaurant_decide: canDecide,
         reason: row.reason || row.cancellation_reason || 'طلب إلغاء الأوردر',
         created_at: row.created_at || new Date().toISOString(),
-        status: row.status || 'pending',
+        status: reqStatus,
       };
     });
 
@@ -535,6 +644,7 @@ export async function listPendingCancellations(): Promise<
 
 /**
  * البت في طلب الإلغاء (موافقة أو رفض مع سبب)
+ * يطبق قاعدة البيانات التحقق الفعلي من المسار والصلاحية ومنع الموافقة الذاتية.
  * @param requestId معرف طلب الإلغاء
  * @param approve هل وافق المطعم على الإلغاء؟
  * @param reason سبب الرفض في حال رفض المطعم
@@ -563,6 +673,15 @@ export async function decideCancellation(
       return {
         success: false,
         error: `فشل البت في طلب الإلغاء: ${error.message}`,
+      };
+    }
+
+    if (data && typeof data === 'object' && (data as any).success === false) {
+      return {
+        success: false,
+        error:
+          (data as any).message ||
+          'غير مصرح لك بالبت في طلب الإلغاء لهذا الطلب وفق السياسة المعتمدة.',
       };
     }
 

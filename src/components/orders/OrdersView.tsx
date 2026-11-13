@@ -449,11 +449,13 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                           ? 'المطعم'
                           : cancel.requested_by_role === 'customer'
                           ? 'العميل'
+                          : cancel.requested_by_role === 'admin'
+                          ? 'الإدارة'
                           : 'مصدر غير متاح';
                       return (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-100 text-rose-800 text-[10px] font-bold border border-rose-300 animate-pulse">
                           <ShieldAlert className="w-3 h-3 text-rose-600" />
-                          طلب إلغاء: {roleLabel}
+                          طلب إلغاء ({roleLabel}) — {cancel.can_restaurant_decide ? 'متاح قرار المطعم' : 'للمتابعة/الإدارة'}
                         </span>
                       );
                     })()}

@@ -206,6 +206,7 @@ export interface DbRestaurantDeliveryOrder {
   order_id: string; // uuid
   driver_user_id?: string | null; // uuid
   status: string; // pending, assigned, picked_up, on_the_way, delivered, cancelled
+  restaurant_phone_confirmed_at?: string | null;
   created_at: string;
   updated_at: string;
   assigned_at?: string | null;
@@ -226,13 +227,21 @@ export interface DbRestaurantOrderCancellationRequest {
   updated_at?: string | null;
 }
 
+export type CancellationRequesterRole = 'customer' | 'driver' | 'restaurant' | 'admin' | 'unknown';
+
 export interface DbPendingCancellation {
   id: string;
+  request_id?: string;
   order_id: string;
   order_number?: string | number;
   customer_name?: string;
   requested_by?: string | null;
-  requested_by_role?: 'customer' | 'driver' | 'restaurant' | 'unknown' | string;
+  requested_by_role: CancellationRequesterRole;
+  fulfillment_route?: 'restaurant_delivery' | 'driver_delivery' | string | null;
+  order_status?: string | null;
+  driver_user_id?: string | null;
+  restaurant_phone_confirmed_at?: string | null;
+  can_restaurant_decide: boolean;
   reason: string;
   created_at: string;
   status?: string;

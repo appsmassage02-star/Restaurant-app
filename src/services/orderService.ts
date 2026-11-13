@@ -243,6 +243,7 @@ export function mapDbOrderToAppOrder(
       assignedAt: deliveryOrder.assigned_at || undefined,
       pickedUpAt: deliveryOrder.picked_up_at || undefined,
       deliveredAt: deliveryOrder.delivered_at || undefined,
+      restaurantPhoneConfirmedAt: deliveryOrder.restaurant_phone_confirmed_at || undefined,
       status: deliveryOrder.status,
     };
   }

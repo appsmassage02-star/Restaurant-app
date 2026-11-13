@@ -29,6 +29,7 @@ import { getArabicStatusLabel, getArabicRouteLabel } from '../../services/orderS
 import {
   getOrderWorkflow,
   recordItemFulfillment,
+  evaluateRestaurantCancellationAuthority,
 } from '../../services/orderWorkflowService';
 import { DbOrderWorkflowItem } from '../../types/database';
 
@@ -44,6 +45,7 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
   onOpenInvoice,
 }) => {
   const {
+    owner,
     restaurant,
     refreshOrders,
     acceptOrderWorkflow,
@@ -306,8 +308,8 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
     } else {
       setActionSuccess(
         approve
-          ? 'تمت الموافقة على إلغاء الطلب بناءً على رغبة العميل.'
-          : 'تم رفض طلب الإلغاء مع إشعار مقدم الطلب بالسبب.'
+          ? 'تمت الموافقة على إلغاء الطلب وتحديث حالته بنجاح.'
+          : 'تم رفض طلب الإلغاء مع تسجيل السبب بنجاح.'
       );
       setShowCancelRejectDialog(false);
       refreshOrders();
@@ -417,108 +419,165 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
           )}
 
           {/* Pending Cancellation Alert Banner */}
-          {pendingCancel && (
-            <div className="p-4 bg-rose-50 border-2 border-rose-300 rounded-2xl space-y-3 shadow-xs">
-              <div className="flex items-center gap-2 text-rose-900 font-black text-sm">
-                <ShieldAlert className="w-5 h-5 text-rose-600 animate-bounce" />
-                <span>
-                  {pendingCancel.requested_by_role === 'restaurant'
-                    ? 'تنبيه: يوجد طلب إلغاء لهذا الأوردر مرسل من قِبل المطعم'
-                    : pendingCancel.requested_by_role === 'driver'
-                    ? 'تنبيه: ورد طلب لإلغاء هذا الأوردر من مندوب التوصيل (الطيار)'
-                    : pendingCancel.requested_by_role === 'customer'
-                    ? 'تنبيه هام: ورد طلب لإلغاء هذا الأوردر من العميل'
-                    : 'تنبيه: ورد طلب لإلغاء هذا الأوردر (مصدر الطلب غير متاح)'}
-                  !
-                </span>
-              </div>
+          {pendingCancel && (() => {
+            const effectiveRoute =
+              pendingCancel.fulfillment_route ||
+              order.rawRoute ||
+              (order.route === 'SELF_DELIVERY' ? 'restaurant_delivery' : 'driver_delivery');
+            const isSelfDeliveryCancelRoute = effectiveRoute === 'restaurant_delivery';
+            const isDriverDeliveryCancelRoute = effectiveRoute === 'driver_delivery';
+            const phoneConfirmedAt =
+              pendingCancel.restaurant_phone_confirmed_at ||
+              order.deliveryOrder?.restaurant_phone_confirmed_at ||
+              order.driverInfo?.restaurantPhoneConfirmedAt ||
+              null;
+            const effectiveOrderStatus = (pendingCancel.order_status || rawStatus || '').toLowerCase();
+            const isPrepOrLater = [
+              'preparing',
+              'ready',
+              'picked_up',
+              'on_the_way',
+              'delivered',
+              'completed',
+            ].includes(effectiveOrderStatus);
 
-              <p className="text-xs text-rose-800 bg-white/70 p-2.5 rounded-xl border border-rose-200">
-                <span className="font-bold">
-                  سبب الإلغاء المذكور{' '}
-                  {pendingCancel.requested_by_role === 'restaurant'
-                    ? '(من المطعم)'
-                    : pendingCancel.requested_by_role === 'driver'
-                    ? '(من الطيار)'
-                    : pendingCancel.requested_by_role === 'customer'
-                    ? '(من العميل)'
-                    : '(المصدر غير محدد)'}
-                  :{' '}
-                </span>
-                <span>{pendingCancel.reason}</span>
-              </p>
+            const canRestaurantDecide = evaluateRestaurantCancellationAuthority({
+              fulfillmentRoute: effectiveRoute,
+              requestedByRole: pendingCancel.requested_by_role,
+              requestedBy: pendingCancel.requested_by,
+              currentUserId: owner?.id,
+              orderStatus: effectiveOrderStatus,
+              requestStatus: pendingCancel.status,
+              rpcCanRestaurantDecide: pendingCancel.can_restaurant_decide,
+            });
 
-              {/* إذا كان المطعم هو مقدم الطلب: منع البت الذاتي */}
-              {pendingCancel.requested_by_role === 'restaurant' ? (
-                <div className="p-3 bg-amber-50 text-amber-900 rounded-xl border border-amber-200 font-medium text-xs leading-relaxed">
-                  طلب الإلغاء تم إرساله من قِبل المطعم وهو قيد مراجعة واعتماد الإدارة أو العميل وفق دورة العمل المعتمدة ولا يمكن للمطعم البت فيه ذاتياً.
+            const requesterLabel =
+              pendingCancel.requested_by_role === 'restaurant'
+                ? 'المطعم'
+                : pendingCancel.requested_by_role === 'driver'
+                ? 'كابتن التوصيل (الطيار)'
+                : pendingCancel.requested_by_role === 'customer'
+                ? 'العميل'
+                : pendingCancel.requested_by_role === 'admin'
+                ? 'الإدارة'
+                : 'مصدر غير متاح';
+
+            return (
+              <div className="p-4 bg-rose-50 border-2 border-rose-300 rounded-2xl space-y-3 shadow-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-rose-900 font-black text-sm">
+                    <ShieldAlert className="w-5 h-5 text-rose-600 animate-bounce shrink-0" />
+                    <span>
+                      {pendingCancel.requested_by_role === 'restaurant'
+                        ? 'تنبيه: يوجد طلب إلغاء لهذا الأوردر مرسل من قِبل المطعم'
+                        : pendingCancel.requested_by_role === 'driver'
+                        ? 'تنبيه: ورد طلب لإلغاء هذا الأوردر من كابتن التوصيل (الطيار)'
+                        : pendingCancel.requested_by_role === 'customer'
+                        ? 'تنبيه هام: ورد طلب لإلغاء هذا الأوردر من العميل'
+                        : pendingCancel.requested_by_role === 'admin'
+                        ? 'تنبيه: طلب إلغاء صادر عبر الإدارة'
+                        : 'تنبيه: ورد طلب لإلغاء هذا الأوردر (مصدر الطلب غير متاح)'}
+                      !
+                    </span>
+                  </div>
+
+                  <span
+                    className={`text-[10px] font-bold px-2.5 py-1 rounded-full border ${
+                      isSelfDeliveryCancelRoute
+                        ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                        : 'bg-blue-100 text-blue-900 border-blue-300'
+                    }`}
+                  >
+                    المسار: {getArabicRouteLabel(effectiveRoute)}
+                  </span>
                 </div>
-              ) : pendingCancel.requested_by_role === 'unknown' ? (
-                /* إذا كان المصدر غير محدد: حظر أزرار القرار لحماية دورة العمل */
-                <div className="p-3 bg-slate-100 text-slate-800 rounded-xl border border-slate-300 font-medium text-xs leading-relaxed space-y-1">
-                  <div className="font-bold text-slate-900">مصدر طلب الإلغاء غير متاح في بيانات المنظومة:</div>
-                  <p className="text-[11px] text-slate-600">
-                    تم إيقاف أزرار الموافقة والرفض لحماية دورة العمل؛ حيث لا يمكن اتخاذ قرار إلغاء دون التحقق من هوية مقدم الطلب وصلاحية المطعم في البت فيه. يلزم تحديث دالة RPC في قاعدة البيانات لإرجاع هوية ودور مقدم الطلب.
-                  </p>
-                </div>
-              ) : pendingCancel.requested_by_role === 'driver' ? (
-                /* إذا كان الطلب من الطيار: يتطلب مراجعة الإدارة */
-                <div className="p-3 bg-blue-50 text-blue-900 rounded-xl border border-blue-200 font-medium text-xs leading-relaxed">
-                  طلب الإلغاء مقدم من كابتن التوصيل (الطيار) وهو قيد مراجعة واعتماد الإدارة وفق دورة العمل المعتمدة.
-                </div>
-              ) : showCancelRejectDialog ? (
-                /* يظهر هذا الخيار فقط وفقط عندما يكون مقدم الطلب عميلاً مؤكداً */
-                <div className="space-y-2 pt-1 bg-white p-3 rounded-xl border border-rose-200">
-                  <label className="block font-bold text-slate-800 text-xs">
-                    سبب رفض إلغاء الطلب (سيظهر للعميل) *
-                  </label>
-                  <input
-                    type="text"
-                    value={cancelRejectReason}
-                    onChange={(e) => setCancelRejectReason(e.target.value)}
-                    placeholder="مثال: تم إعداد وتجهيز الوجبة بالكامل ولا يمكن التراجع..."
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-rose-500 font-medium"
-                  />
+
+                <p className="text-xs text-rose-800 bg-white/80 p-2.5 rounded-xl border border-rose-200 leading-relaxed">
+                  <span className="font-bold">مقدم الطلب: </span>
+                  <span className="font-black">{requesterLabel}</span>
+                  <span className="mx-1.5 text-rose-300">|</span>
+                  <span className="font-bold">السبب المذكور: </span>
+                  <span>{pendingCancel.reason}</span>
+                </p>
+
+                {pendingCancel.requested_by_role === 'restaurant' ? (
+                  <div className="p-3 bg-amber-50 text-amber-900 rounded-xl border border-amber-200 font-medium text-xs leading-relaxed">
+                    طلب الإلغاء مُرسل من قِبل المطعم نفسه؛ تمنع السياسة المعتمدة البت الذاتي للمطعم في طلبات الإلغاء الخاصة به، ويُحال الطلب للمراجعة وفق مسار التوصيل والإدارة.
+                  </div>
+                ) : pendingCancel.requested_by_role === 'unknown' ? (
+                  <div className="p-3 bg-slate-100 text-slate-800 rounded-xl border border-slate-300 font-medium text-xs leading-relaxed space-y-1">
+                    <div className="font-bold text-slate-900">مصدر طلب الإلغاء غير متاح في بيانات المنظومة:</div>
+                    <p className="text-[11px] text-slate-600">
+                      تم إيقاف أزرار الموافقة والرفض؛ إذ لا يُسمح بالبت في الإلغاء قبل التحقق من هوية مقدم الطلب وصلاحية المسار في قاعدة البيانات.
+                    </p>
+                  </div>
+                ) : isDriverDeliveryCancelRoute ? (
+                  <div className="p-3 bg-blue-50 text-blue-950 rounded-xl border border-blue-200 font-medium text-xs leading-relaxed space-y-1">
+                    <div className="font-bold text-blue-900">
+                      مسار دليفري طلباتي (سائق المنظومة) — قرار الإلغاء ليس من صلاحية المطعم:
+                    </div>
+                    <p className="text-[11px] text-blue-800">
+                      {phoneConfirmedAt || isPrepOrLater
+                        ? 'تم تأكيد الاتصال الهاتفي بالمطعم أو بدء التحضير بالفعل؛ لذلك يُمنع السائق والمطعم من البت المباشر، ويتولى مسؤول الإدارة البت في هذا الطلب.'
+                        : 'في مسار توصيل السائقين قبل تأكيد الاتصال الهاتفي بالمطعم وبدء التحضير، تعود صلاحية البت للسائق المعين أو للإدارة ولا تظهر أزرار البت للمطعم.'}
+                    </p>
+                  </div>
+                ) : !canRestaurantDecide ? (
+                  <div className="p-3 bg-slate-100 text-slate-800 rounded-xl border border-slate-300 font-medium text-xs leading-relaxed">
+                    لا يملك المطعم صلاحية البت في طلب الإلغاء لهذا الطلب في حالته أو مساره الحالي.
+                  </div>
+                ) : showCancelRejectDialog ? (
+                  <div className="space-y-2 pt-1 bg-white p-3 rounded-xl border border-rose-200">
+                    <label className="block font-bold text-slate-800 text-xs">
+                      سبب رفض إلغاء الطلب (إلزامي وسيظهر لمقدم الطلب) *
+                    </label>
+                    <input
+                      type="text"
+                      value={cancelRejectReason}
+                      onChange={(e) => setCancelRejectReason(e.target.value)}
+                      placeholder="مثال: تم إعداد وتجهيز الوجبة بالكامل ولا يمكن التراجع..."
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-rose-500 font-medium"
+                    />
+                    <div className="flex items-center gap-2 justify-end pt-1">
+                      <button
+                        onClick={() => setShowCancelRejectDialog(false)}
+                        disabled={isSubmitting}
+                        className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-bold text-xs cursor-pointer"
+                      >
+                        تراجع
+                      </button>
+                      <button
+                        onClick={() => handleDecideCancellation(false)}
+                        disabled={isSubmitting || !cancelRejectReason.trim()}
+                        className="px-4 py-1.5 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white rounded-lg font-bold text-xs flex items-center gap-1.5 cursor-pointer"
+                      >
+                        {isSubmitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                        <span>تأكيد رفض الإلغاء</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
                   <div className="flex items-center gap-2 justify-end pt-1">
                     <button
-                      onClick={() => setShowCancelRejectDialog(false)}
+                      onClick={() => setShowCancelRejectDialog(true)}
                       disabled={isSubmitting}
-                      className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-bold text-xs"
+                      className="px-4 py-2 bg-white hover:bg-slate-100 text-rose-700 font-bold border border-rose-300 rounded-xl text-xs transition-colors cursor-pointer"
                     >
-                      تراجع
+                      رفض طلب الإلغاء
                     </button>
                     <button
-                      onClick={() => handleDecideCancellation(false)}
-                      disabled={isSubmitting || !cancelRejectReason.trim()}
-                      className="px-4 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-bold text-xs flex items-center gap-1.5"
+                      onClick={() => handleDecideCancellation(true)}
+                      disabled={isSubmitting}
+                      className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-black rounded-xl text-xs transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer"
                     >
                       {isSubmitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                      <span>تأكيد رفض الإلغاء</span>
+                      <span>الموافقة على الإلغاء</span>
                     </button>
                   </div>
-                </div>
-              ) : (
-                /* تظهر أزرار الموافقة والرفض فقط إذا كان الطلب من العميل بصورة مؤكدة */
-                <div className="flex items-center gap-2 justify-end pt-1">
-                  <button
-                    onClick={() => setShowCancelRejectDialog(true)}
-                    disabled={isSubmitting}
-                    className="px-4 py-2 bg-white hover:bg-slate-100 text-rose-700 font-bold border border-rose-300 rounded-xl text-xs transition-colors cursor-pointer"
-                  >
-                    رفض طلب الإلغاء
-                  </button>
-                  <button
-                    onClick={() => handleDecideCancellation(true)}
-                    disabled={isSubmitting}
-                    className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-black rounded-xl text-xs transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer"
-                  >
-                    {isSubmitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                    <span>الموافقة على الإلغاء</span>
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
+                )}
+              </div>
+            );
+          })()}
 
           {/* Driver Information Card (when courier is assigned) */}
           {order.driverInfo && (

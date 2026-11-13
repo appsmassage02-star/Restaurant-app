@@ -18,7 +18,9 @@ import {
   ImageOff,
 } from 'lucide-react';
 import { MenuItem, MenuCategory, OptionGroup, OptionItem } from '../../types';
-import { supabase, isSupabaseConfigured } from '../../services/supabase';
+import { useApp } from '../../context/AppContext';
+import { validateImageFileForCompression } from '../../services/imageProcessingService';
+import { uploadRestaurantImage } from '../../services/imageUploadService';
 
 interface ItemModalProps {
   isOpen: boolean;
@@ -37,6 +39,7 @@ export const ItemModal: React.FC<ItemModalProps> = ({
   itemToEdit,
   activeCategoryId,
 }) => {
+  const { restaurant } = useApp();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [price, setPrice] = useState<number | ''>(120);
@@ -86,76 +89,46 @@ export const ItemModal: React.FC<ItemModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Handle local file upload
+  // Handle local file compression (WebP <= 1200px & <= 1 MiB) + signed upload to Talabaty Food Storage
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-    if (isUploading) return;
+    if (!file || isUploading) return;
 
-    // Validate type and size (max 5MB)
-    const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg'];
-    if (!validTypes.includes(file.type)) {
-      setError('صيغة الملف غير مدعومة. يرجى اختيار صورة بصيغة JPG أو PNG أو WebP.');
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      return;
-    }
-
-    if (file.size > 5 * 1024 * 1024) {
-      setError('حجم الصورة كبير جدًا. الحد الأقصى المسموح به هو 5 ميجابايت.');
+    const validation = validateImageFileForCompression(file);
+    if (!validation.valid) {
+      setError(validation.error || 'صيغة الملف غير مدعومة.');
       if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
 
     setError('');
     setIsUploading(true);
-    setUploadStatus('جارٍ تجهيز ورفع الصورة إلى التخزين السحابي...');
+    setUploadStatus('جارٍ ضغط الصورة وتحويلها إلى WebP ورفعها إلى مشروع التخزين المستقل...');
 
-    // رفع حقيقي ومباشر إلى Supabase Storage Bucket ('restaurant-items') بدون بدائل وهمية
     try {
-      if (!isSupabaseConfigured) {
-        setError('إعدادات الاتصال بـ Supabase غير مهيأة.');
+      const result = await uploadRestaurantImage(file, restaurant.id, 'menu-items');
+      if (!result.success || !result.publicUrl) {
+        setError(result.error || 'فشل رفع الصورة إلى مشروع التخزين المستقل.');
         setUploadStatus(null);
-        setIsUploading(false);
         return;
       }
 
-      const fileExt = file.name.split('.').pop() || 'jpg';
-      const fileName = `item-${Date.now()}-${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
-
-      const { data, error: uploadErr } = await supabase.storage
-        .from('restaurant-items')
-        .upload(fileName, file, { cacheControl: '3600', upsert: true });
-
-      if (uploadErr) {
-        console.error('Supabase storage upload error:', uploadErr);
-        setError(`فشل رفع الصورة: الـ bucket المطلوب ("restaurant-items") غير موجود في Supabase Storage أو غير مصرح بالرفع عليه (${uploadErr.message}). يرجى إنشاء الـ Bucket وضبط الصلاحيات.`);
-        setUploadStatus(null);
-        setIsUploading(false);
-        return;
+      setImage(result.publicUrl);
+      if (result.compressedInfo) {
+        const origKb = Math.max(1, Math.round(result.compressedInfo.originalSizeBytes / 1024));
+        const finalKb = Math.max(1, Math.round(result.compressedInfo.sizeBytes / 1024));
+        setUploadStatus(
+          `تم التحويل إلى WebP (${result.compressedInfo.width}×${result.compressedInfo.height}) وضغط الحجم من ${origKb} ك.ب إلى ${finalKb} ك.ب ورفعها بنجاح.`
+        );
+      } else {
+        setUploadStatus('تم ضغط الصورة بصيغة WebP ورفعها بنجاح وتعيين رابطها الفعلي للصنف.');
       }
-
-      if (data) {
-        const { data: pubData } = supabase.storage
-          .from('restaurant-items')
-          .getPublicUrl(data.path);
-
-        if (pubData?.publicUrl) {
-          setImage(pubData.publicUrl);
-          setUploadStatus('تم رفع الصورة بنجاح وتعيين رابطها الفعلي للصنف.');
-          setIsUploading(false);
-          return;
-        }
-      }
-
-      setError('تعذر الحصول على الرابط العام للصورة بعد رفعها.');
-      setUploadStatus(null);
-      setIsUploading(false);
     } catch (err: any) {
-      console.error('Storage upload exception:', err);
-      setError(`خطأ أثناء رفع الصورة: ${err?.message || 'تعذر الاتصال بخدمة التخزين السحابي'}.`);
+      console.error('Food storage upload exception:', err);
+      setError(`خطأ أثناء معالجة أو رفع الصورة: ${err?.message || 'تعذر الاتصال بخدمة التخزين'}.`);
       setUploadStatus(null);
-      setIsUploading(false);
     } finally {
+      setIsUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
@@ -520,38 +493,38 @@ export const ItemModal: React.FC<ItemModalProps> = ({
             {/* Tab 1: Upload */}
             {imageTab === 'upload' && (
               <div className="p-4 bg-white rounded-xl border border-dashed border-slate-300 text-center space-y-2">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  className="hidden"
-                  onChange={handleFileUpload}
-                  disabled={isUploading}
-                />
-                <Upload className="w-8 h-8 text-amber-500 mx-auto" />
-                <div>
-                  <button
-                    type="button"
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+                    className="hidden"
+                    onChange={handleFileUpload}
                     disabled={isUploading}
-                    onClick={() => fileInputRef.current?.click()}
-                    className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl text-xs inline-flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
-                  >
-                    {isUploading ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        <span>جارٍ رفع الصورة...</span>
-                      </>
-                    ) : (
-                      <>
-                        <FolderOpen className="w-4 h-4" />
-                        <span>اختيار صورة من جهازك للرفع</span>
-                      </>
-                    )}
-                  </button>
-                  <p className="text-[11px] text-slate-400 mt-1.5">
-                    الصيغ المدعومة: JPG، PNG، WebP (الحد الأقصى: 5 ميجابايت) — يتطلب تهيئة bucket "restaurant-items" في Supabase Storage
-                  </p>
-                </div>
+                  />
+                  <Upload className="w-8 h-8 text-amber-500 mx-auto" />
+                  <div>
+                    <button
+                      type="button"
+                      disabled={isUploading}
+                      onClick={() => fileInputRef.current?.click()}
+                      className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold rounded-xl text-xs inline-flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
+                    >
+                      {isUploading ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>جارٍ الضغط والرفع بصيغة WebP...</span>
+                        </>
+                      ) : (
+                        <>
+                          <FolderOpen className="w-4 h-4" />
+                          <span>اختيار صورة من جهازك للضغط والرفع</span>
+                        </>
+                      )}
+                    </button>
+                    <p className="text-[11px] text-slate-400 mt-1.5">
+                      الصيغ المدعومة: JPG، JPEG، PNG، WebP — يتم التحويل تلقائياً إلى WebP (بحد أقصى 1200px و1 ميجابايت) والرفع إلى مشروع التخزين المستقل (restaurant-product-images)
+                    </p>
+                  </div>
               </div>
             )}
 
@@ -775,7 +748,7 @@ export const ItemModal: React.FC<ItemModalProps> = ({
             </button>
             <button
               type="submit"
-              disabled={isSubmitting}
+              disabled={isSubmitting || isUploading}
               className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-slate-950 rounded-xl font-black flex items-center gap-1.5 shadow-md shadow-amber-500/20 disabled:opacity-60 cursor-pointer"
             >
               {isSubmitting ? (

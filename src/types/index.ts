@@ -134,6 +134,7 @@ export interface DriverInfo {
   assignedAt?: string;
   pickedUpAt?: string;
   deliveredAt?: string;
+  restaurantPhoneConfirmedAt?: string;
   status?: string;
 }
 
