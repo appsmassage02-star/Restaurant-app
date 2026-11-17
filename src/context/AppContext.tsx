@@ -79,11 +79,9 @@ const EMPTY_RESTAURANT: RestaurantProfile = {
   address: '',
   governorate: '',
   city: '',
+  area: '',
   latitude: null,
   longitude: null,
-  deliveryRadiusKm: 5.0,
-  maxAllowedRadiusKm: 12.0,
-  deliveryFee: 25.0,
   restaurantDeliveryEnabled: true,
   isOpen: false,
   openingHours: '10:00 ص - 12:00 م',
@@ -143,8 +141,6 @@ interface AppContextType {
     phone?: string;
     address?: string;
     is_open?: boolean;
-    delivery_fee?: number;
-    max_delivery_radius_km?: number;
   }) => Promise<{ success: boolean; error?: string }>;
   setRegistrationStatus: (status: RegistrationStatus, reason?: string) => void;
   registerRestaurantReal: (payload: CreateRestaurantPayload) => Promise<CreateRestaurantResult>;
@@ -537,14 +533,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         address: db.address || '',
         governorate: db.governorate?.name_ar || 'غير محدد',
         city: db.center?.name_ar || db.area?.name_ar || 'غير محدد',
+        area: db.area?.name_ar || '',
         governorateId: db.governorate_id || undefined,
         centerId: db.center_id || undefined,
         areaId: db.area_id || undefined,
         latitude: db.latitude !== undefined && db.latitude !== null ? db.latitude : null,
         longitude: db.longitude !== undefined && db.longitude !== null ? db.longitude : null,
-        deliveryRadiusKm: db.max_delivery_radius_km ?? 6.0,
-        maxAllowedRadiusKm: 15.0,
-        deliveryFee: db.delivery_fee ?? 25.0,
         restaurantDeliveryEnabled: db.restaurant_delivery_enabled !== false,
         isOpen: db.is_open ?? false,
         openingHours: '10:00 ص - 01:00 ص',
@@ -984,15 +978,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setRestaurant((prev) => ({ ...prev, ...updated }));
   };
 
-  // Real Database Update for Restaurant Settings
+  // Real Database Update for Restaurant Settings (commercial fields only; pricing/coverage managed centrally)
   const updateRestaurantSettingsDb = async (updates: {
     name?: string;
     description?: string;
     phone?: string;
     address?: string;
     is_open?: boolean;
-    delivery_fee?: number;
-    max_delivery_radius_km?: number;
   }): Promise<{ success: boolean; error?: string }> => {
     if (!restaurant.id) {
       return { success: false, error: 'معرف المطعم غير متوفر لحفظ الإعدادات في قاعدة البيانات.' };
@@ -1012,8 +1004,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       phone: updates.phone !== undefined ? updates.phone : prev.phone,
       address: updates.address !== undefined ? updates.address : prev.address,
       isOpen: updates.is_open !== undefined ? updates.is_open : prev.isOpen,
-      deliveryFee: updates.delivery_fee !== undefined ? updates.delivery_fee : prev.deliveryFee,
-      deliveryRadiusKm: updates.max_delivery_radius_km !== undefined ? updates.max_delivery_radius_km : prev.deliveryRadiusKm,
     }));
 
     return { success: true };
@@ -1385,7 +1375,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const qty = 2;
     const itemTotal = (sampleItem?.price || 100) * qty;
     const foodTotal = itemTotal;
-    const deliveryFee = restaurant.deliveryFee || 25;
+    const deliveryFee = 0;
     const grandTotal = foodTotal + deliveryFee;
     const commissionRate = (restaurant.adminCommissionPercent || 10) / 100;
     const commissionAmount = Number((foodTotal * commissionRate).toFixed(2));

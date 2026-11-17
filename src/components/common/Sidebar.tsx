@@ -174,9 +174,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </span>
             </div>
             <div className="flex items-center justify-between text-xs">
-              <span className="text-slate-400">أقصى نطاق توصيل</span>
-              <span className="font-semibold text-slate-300">
-                {restaurant.deliveryRadiusKm} كم
+              <span className="text-slate-400">التغطية والتسعير</span>
+              <span className="font-semibold text-slate-300 truncate max-w-[120px]">
+                {restaurant.city && restaurant.city !== 'غير محدد'
+                  ? `${restaurant.governorate} - ${restaurant.city}`
+                  : 'إدارة مركزية'}
               </span>
             </div>
             <div className="mt-2.5 pt-2 border-t border-slate-700/60 text-[11px] text-slate-400 flex items-center justify-between">

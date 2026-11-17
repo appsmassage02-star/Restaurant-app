@@ -917,7 +917,7 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
               </div>
 
               <div className="flex justify-between text-slate-600">
-                <span>رسوم التوصيل:</span>
+                <span>رسوم التوصيل المحفوظة وقت الطلب:</span>
                 <span className="font-semibold text-slate-900">
                   {order.deliveryFee.toLocaleString('ar-EG')} ج.م{' '}
                   <span className="text-[10px] text-slate-400">
@@ -933,7 +933,7 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
                 </span>
               </div>
 
-              {/* Commission deduction breakdown */}
+              {/* Saved Pricing & Commission Snapshot Breakdown */}
               <div className="mt-2 pt-2 border-t border-dashed border-slate-300 space-y-1 text-[11px] text-slate-600 bg-white p-2.5 rounded-xl border">
                 <div className="flex justify-between">
                   <span>
@@ -943,8 +943,22 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
                     -{order.adminCommissionAmount.toLocaleString('ar-EG')} ج.م
                   </span>
                 </div>
+                {typeof order.driverFeeShare === 'number' && order.driverFeeShare > 0 && (
+                  <div className="flex justify-between">
+                    <span>حصة المندوب المحفوظة من رسوم التوصيل:</span>
+                    <span className="font-bold text-blue-700">
+                      {order.driverFeeShare.toLocaleString('ar-EG')} ج.م
+                    </span>
+                  </div>
+                )}
+                {order.deliveryTariffId && (
+                  <div className="flex justify-between text-[10px] text-slate-400">
+                    <span>مرجع التسعير المركزي المحفوظ:</span>
+                    <span className="font-mono">{order.deliveryTariffId}</span>
+                  </div>
+                )}
                 <div className="flex justify-between font-black text-emerald-800 pt-1 border-t border-slate-100 text-xs">
-                  <span>صافي مستحقات المطعم من هذا الطلب:</span>
+                  <span>صافي مستحقات المطعم المحفوظة من هذا الطلب:</span>
                   <span>{order.netRestaurantDue.toLocaleString('ar-EG')} ج.م</span>
                 </div>
               </div>

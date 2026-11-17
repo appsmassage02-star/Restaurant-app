@@ -291,6 +291,32 @@ export function mapDbOrderToAppOrder(
   const area =
     dbOrder.delivery_area_name_snapshot || '';
 
+  const deliveryTariffId =
+    dbOrder.delivery_tariff_id ||
+    dbOrder.area_tariff_id ||
+    dbOrder.tariff_id ||
+    null;
+
+  const savedJsonSnapshot =
+    dbOrder.delivery_pricing_snapshot ||
+    dbOrder.pricing_snapshot ||
+    dbOrder.delivery_tariff_snapshot ||
+    dbOrder.tariff_snapshot ||
+    null;
+
+  const deliveryPricingSnapshot: Record<string, any> = {
+    ...(savedJsonSnapshot && typeof savedJsonSnapshot === 'object' ? savedJsonSnapshot : {}),
+    fulfillment_route: dbOrder.fulfillment_route,
+    delivery_fee: deliveryFee,
+    commission_percent_snapshot: commissionRatePct,
+    driver_fee_share: driverFeeShare,
+    admin_fee_share: adminFeeShare,
+    restaurant_fee_share: restaurantFeeShare,
+    delivery_governorate_id: dbOrder.delivery_governorate_id || null,
+    delivery_center_id: dbOrder.delivery_center_id || null,
+    delivery_area_id: dbOrder.delivery_area_id || null,
+  };
+
   return {
     id: dbOrder.id,
     orderNumber: String(dbOrder.order_number),
@@ -327,6 +353,8 @@ export function mapDbOrderToAppOrder(
     deliveryGovernorateSnapshot: dbOrder.delivery_governorate_name_snapshot || undefined,
     deliveryCenterSnapshot: dbOrder.delivery_center_name_snapshot || undefined,
     deliveryAreaSnapshot: dbOrder.delivery_area_name_snapshot || undefined,
+    deliveryTariffId,
+    deliveryPricingSnapshot,
     driverInfo,
     deliveryOrder: deliveryOrder || undefined,
   };

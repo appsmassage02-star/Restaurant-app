@@ -14,7 +14,14 @@ export interface DbProfile {
   updated_at?: string | null;
 }
 
-export interface FoodGovernorate {
+export interface GeoBoundaryGeometry {
+  type: 'Polygon' | 'MultiPolygon' | 'Feature' | 'FeatureCollection' | string;
+  coordinates?: any;
+  geometry?: GeoBoundaryGeometry | null;
+  features?: Array<{ geometry?: GeoBoundaryGeometry | null }>;
+}
+
+export interface GeoGovernorate {
   id: string; // uuid
   country_name?: string | null;
   name_ar: string; // اسم المحافظة بالعربية
@@ -22,11 +29,19 @@ export interface FoodGovernorate {
   code?: string | null;
   is_active?: boolean;
   sort_order?: number | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  centroid?: any;
+  boundary?: GeoBoundaryGeometry | string | null;
+  boundary_source?: string | null;
+  boundary_updated_at?: string | null;
+  source_system?: string | null;
+  source_code?: string | null;
   created_at?: string;
   updated_at?: string;
 }
 
-export interface FoodCenter {
+export interface GeoCenter {
   id: string; // uuid
   governorate_id: string; // uuid
   name_ar: string; // اسم المركز/المدينة بالعربية
@@ -34,11 +49,20 @@ export interface FoodCenter {
   is_active?: boolean;
   sort_order?: number | null;
   source_code?: string | null;
+  admin_unit_type?: string | null;
+  classification_status?: string | null;
+  source_system?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  centroid?: any;
+  boundary?: GeoBoundaryGeometry | string | null;
+  boundary_source?: string | null;
+  boundary_updated_at?: string | null;
   created_at?: string;
   updated_at?: string;
 }
 
-export interface FoodArea {
+export interface GeoArea {
   id: string; // uuid
   governorate_id?: string | null; // uuid
   center_id: string; // uuid
@@ -46,8 +70,32 @@ export interface FoodArea {
   name_en?: string | null;
   is_active?: boolean;
   sort_order?: number | null;
+  admin_unit_type?: string | null;
+  classification_status?: string | null;
+  source_system?: string | null;
+  source_code?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  centroid?: any;
+  boundary?: GeoBoundaryGeometry | string | null;
+  boundary_source?: string | null;
+  boundary_updated_at?: string | null;
   created_at?: string;
   updated_at?: string;
+}
+
+export interface DbDeliveryAreaTariff {
+  id: string;
+  service_type: string;
+  delivery_owner: string;
+  restaurant_id?: string | null;
+  governorate_id?: string | null;
+  center_id?: string | null;
+  area_id?: string | null;
+  notes?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  [key: string]: any;
 }
 
 export interface RestaurantCategory {
@@ -80,18 +128,16 @@ export interface DbRestaurant {
   image_url?: string | null; // صورة المطعم
   is_active?: boolean; // حالة تفعيل المطعم من الإدارة
   is_open?: boolean; // حالة فتح/إغلاق المطعم لاستقبال الطلبات
-  delivery_fee?: number | null;
   commission_percent?: number | null;
   food_money_settlement_mode?: string | null;
-  max_delivery_radius_km?: number | null;
   restaurant_delivery_enabled?: boolean | null;
   created_at?: string;
   updated_at?: string;
 
-  // العلاقات المحملة
-  governorate?: FoodGovernorate | null;
-  center?: FoodCenter | null;
-  area?: FoodArea | null;
+  // العلاقات المحملة من geo_*
+  governorate?: GeoGovernorate | null;
+  center?: GeoCenter | null;
+  area?: GeoArea | null;
   category_links?: RestaurantCategoryLink[];
 }
 
@@ -112,7 +158,7 @@ export interface CreateRestaurantPayload {
 }
 
 /**
- * جداول الطلبات الفعلية في قاعدة بيانات Supabase (المرحلة الأولى)
+ * جداول الطلبات الفعلية في قاعدة بيانات Supabase
  */
 export interface DbRestaurantOrder {
   id: string; // uuid
@@ -130,6 +176,9 @@ export interface DbRestaurantOrder {
   delivery_address: string;
   delivery_latitude?: number | null;
   delivery_longitude?: number | null;
+  delivery_governorate_id?: string | null;
+  delivery_center_id?: string | null;
+  delivery_area_id?: string | null;
   food_subtotal: number;
   discount_amount: number;
   delivery_fee: number;
@@ -148,6 +197,7 @@ export interface DbRestaurantOrder {
   delivery_governorate_name_snapshot?: string | null;
   delivery_center_name_snapshot?: string | null;
   delivery_area_name_snapshot?: string | null;
+  [key: string]: any;
 }
 
 export interface DbRestaurantOrderItem {

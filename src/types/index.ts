@@ -166,6 +166,8 @@ export interface Order {
   deliveryGovernorateSnapshot?: string;
   deliveryCenterSnapshot?: string;
   deliveryAreaSnapshot?: string;
+  deliveryTariffId?: string | null;
+  deliveryPricingSnapshot?: Record<string, any> | null;
   workflowItems?: DbOrderWorkflowItem[];
   pendingCancellation?: DbPendingCancellation | null;
   driverInfo?: DriverInfo;
@@ -210,14 +212,12 @@ export interface RestaurantProfile {
   address: string;
   governorate: string;
   city: string;
+  area?: string;
   governorateId?: string | number | null;
   centerId?: string | number | null;
   areaId?: string | number | null;
   latitude: number | null;
   longitude: number | null;
-  deliveryRadiusKm: number;
-  maxAllowedRadiusKm: number; // Admin fixed restriction
-  deliveryFee: number; // Fixed/Admin guidance
   restaurantDeliveryEnabled: boolean;
   isOpen: boolean;
   openingHours: string;

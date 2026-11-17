@@ -4,9 +4,9 @@ import {
   DbProfile,
   CreateRestaurantPayload,
   RestaurantCategoryLink,
-  FoodGovernorate,
-  FoodCenter,
-  FoodArea,
+  GeoGovernorate,
+  GeoCenter,
+  GeoArea,
 } from '../types/database';
 
 export interface RestaurantFetchResult {
@@ -70,33 +70,33 @@ export async function fetchOwnerRestaurant(
 
     const rest = data as DbRestaurant;
 
-    // Fetch joined governorate, center, area names if available
+    // Fetch joined governorate, center, area names & geo metadata from geo_* tables
     try {
       if (rest.governorate_id) {
         const { data: gData } = await supabase
-          .from('food_governorates')
-          .select('id, name_ar, country_name')
+          .from('geo_governorates')
+          .select('id, name_ar, name_en, code, country_name, latitude, longitude, boundary')
           .eq('id', rest.governorate_id)
           .maybeSingle();
-        if (gData) rest.governorate = gData as FoodGovernorate;
+        if (gData) rest.governorate = gData as GeoGovernorate;
       }
 
       if (rest.center_id) {
         const { data: cData } = await supabase
-          .from('food_centers')
-          .select('id, name_ar, governorate_id')
+          .from('geo_centers')
+          .select('id, name_ar, name_en, governorate_id, latitude, longitude, boundary')
           .eq('id', rest.center_id)
           .maybeSingle();
-        if (cData) rest.center = cData as FoodCenter;
+        if (cData) rest.center = cData as GeoCenter;
       }
 
       if (rest.area_id) {
         const { data: aData } = await supabase
-          .from('food_areas')
-          .select('id, name_ar, center_id')
+          .from('geo_areas')
+          .select('id, name_ar, name_en, governorate_id, center_id, latitude, longitude, boundary')
           .eq('id', rest.area_id)
           .maybeSingle();
-        if (aData) rest.area = aData as FoodArea;
+        if (aData) rest.area = aData as GeoArea;
       }
     } catch {
       // Non-blocking relation enrichment

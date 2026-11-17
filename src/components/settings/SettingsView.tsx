@@ -1,45 +1,27 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Settings,
   Store,
-  Phone,
   MapPin,
   Clock,
-  Sliders,
-  ShieldAlert,
   Save,
   CheckCircle,
-  Image as ImageIcon,
   Lock,
-  Compass,
-  Plus,
-  Trash2,
-  Check,
   AlertCircle,
   Loader2,
-  Layers,
-  DollarSign,
-  Info,
   RefreshCw,
   Truck,
+  Compass,
+  ShieldCheck,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import {
-  fetchGovernorates,
-  fetchCenters,
-  fetchAreas,
-} from '../../services/geographicService';
-import {
-  fetchRestaurantServiceAreas,
+  fetchRestaurantCentralTariffs,
   fetchSectionSettings,
-  addRestaurantServiceArea,
-  toggleServiceAreaActive,
-  deleteRestaurantServiceArea,
-  updateAreaDeliveryFee,
-  RestaurantServiceAreaItem,
+  CentralDeliveryTariffItem,
   RestaurantSectionSettings,
 } from '../../services/deliveryAreaService';
-import { FoodGovernorate, FoodCenter, FoodArea } from '../../types/database';
+import { verifyPointInGeoBoundary } from '../../services/geographicService';
 
 export const SettingsView: React.FC = () => {
   const {
@@ -50,7 +32,7 @@ export const SettingsView: React.FC = () => {
     refreshRestaurant,
   } = useApp();
 
-  // Basic Info
+  // Basic Commercial Info (no delivery_fee or max_delivery_radius_km)
   const [name, setName] = useState(restaurant.name);
   const [description, setDescription] = useState(restaurant.description);
   const [phone, setPhone] = useState(restaurant.phone);
@@ -58,37 +40,16 @@ export const SettingsView: React.FC = () => {
   const [logo, setLogo] = useState(restaurant.logo);
   const [openingHours, setOpeningHours] = useState(restaurant.openingHours);
   const [holidays, setHolidays] = useState(restaurant.holidays);
-  const [deliveryFee, setDeliveryFee] = useState<number | ''>(restaurant.deliveryFee || 25);
-  const [deliveryRadiusKm, setDeliveryRadiusKm] = useState(restaurant.deliveryRadiusKm || 5);
   const [isOpen, setIsOpen] = useState(restaurant.isOpen);
   const [isTogglingDelivery, setIsTogglingDelivery] = useState(false);
 
-  // Geographic cascaded selection for adding a new service area
-  const [governorates, setGovernorates] = useState<FoodGovernorate[]>([]);
-  const [centers, setCenters] = useState<FoodCenter[]>([]);
-  const [areas, setAreas] = useState<FoodArea[]>([]);
-
-  const [selectedGovId, setSelectedGovId] = useState('');
-  const [selectedCenterId, setSelectedCenterId] = useState('');
-  const [selectedAreaId, setSelectedAreaId] = useState('');
-  const [newAreaFee, setNewAreaFee] = useState<number | ''>(25);
-  const [newAreaNotes, setNewAreaNotes] = useState('');
-
-  const [loadingGovs, setLoadingGovs] = useState(false);
-  const [loadingCenters, setLoadingCenters] = useState(false);
-  const [loadingAreas, setLoadingAreas] = useState(false);
-
-  // Service Areas list
-  const [serviceAreas, setServiceAreas] = useState<RestaurantServiceAreaItem[]>([]);
-  const [loadingAreasList, setLoadingAreasList] = useState(false);
-  const [addingArea, setAddingArea] = useState(false);
+  // Read-only Central Tariffs (from delivery_area_tariffs)
+  const [centralTariffs, setCentralTariffs] = useState<CentralDeliveryTariffItem[]>([]);
+  const [tariffsError, setTariffsError] = useState<string | null>(null);
+  const [loadingTariffs, setLoadingTariffs] = useState(false);
 
   // Central section settings (Read-only from restaurant_section_settings)
   const [sectionSettings, setSectionSettings] = useState<RestaurantSectionSettings | null>(null);
-
-  // Editing fee inline per area
-  const [editingFeeAreaId, setEditingFeeAreaId] = useState<string | null>(null);
-  const [editingFeeValue, setEditingFeeValue] = useState<number>(25);
 
   // Feedback
   const [isSavingBasic, setIsSavingBasic] = useState(false);
@@ -105,80 +66,56 @@ export const SettingsView: React.FC = () => {
     setLogo(restaurant.logo);
     setOpeningHours(restaurant.openingHours);
     setHolidays(restaurant.holidays);
-    setDeliveryFee(restaurant.deliveryFee || 25);
-    setDeliveryRadiusKm(restaurant.deliveryRadiusKm || 5);
     setIsOpen(restaurant.isOpen);
   }, [restaurant]);
 
-  // Load Governorates
-  useEffect(() => {
-    async function loadGovs() {
-      setLoadingGovs(true);
-      const res = await fetchGovernorates();
-      if (res.data) setGovernorates(res.data);
-      setLoadingGovs(false);
+  // Verify restaurant coordinates against geo_* boundaries when present
+  const locationBoundaryStatus = useMemo(() => {
+    if (
+      restaurant.latitude === null ||
+      restaurant.longitude === null ||
+      !dbRestaurant
+    ) {
+      return null;
     }
-    loadGovs();
-  }, []);
+    return verifyPointInGeoBoundary(restaurant.latitude, restaurant.longitude, {
+      area: dbRestaurant.area || null,
+      center: dbRestaurant.center || null,
+      governorate: dbRestaurant.governorate || null,
+    });
+  }, [restaurant.latitude, restaurant.longitude, dbRestaurant]);
 
-  // Load Centers when Governorate changes
-  useEffect(() => {
-    setSelectedCenterId('');
-    setSelectedAreaId('');
-    setCenters([]);
-    setAreas([]);
-    if (!selectedGovId) return;
-
-    async function loadCentersData() {
-      setLoadingCenters(true);
-      const res = await fetchCenters(selectedGovId);
-      if (res.data) setCenters(res.data);
-      setLoadingCenters(false);
-    }
-    loadCentersData();
-  }, [selectedGovId]);
-
-  // Load Areas when Center changes
-  useEffect(() => {
-    setSelectedAreaId('');
-    setAreas([]);
-    if (!selectedCenterId) return;
-
-    async function loadAreasData() {
-      setLoadingAreas(true);
-      const res = await fetchAreas(selectedCenterId);
-      if (res.data) setAreas(res.data);
-      setLoadingAreas(false);
-    }
-    loadAreasData();
-  }, [selectedCenterId]);
-
-  // Load Service Areas and Central Section Settings
-  const loadDeliveryData = useCallback(async () => {
+  // Load Read-Only Central Coverage & Tariffs and Section Settings
+  const loadCentralDeliveryData = useCallback(async () => {
     if (!restaurant.id) return;
-    setLoadingAreasList(true);
+    setLoadingTariffs(true);
+    setTariffsError(null);
     try {
-      const [areasRes, secRes] = await Promise.all([
-        fetchRestaurantServiceAreas(restaurant.id),
+      const [tariffsRes, secRes] = await Promise.all([
+        fetchRestaurantCentralTariffs(restaurant.id),
         fetchSectionSettings(),
       ]);
 
-      if (areasRes.data) {
-        setServiceAreas(areasRes.data);
+      if (tariffsRes.error) {
+        setTariffsError(tariffsRes.error);
+        setCentralTariffs([]);
+      } else if (tariffsRes.data) {
+        setCentralTariffs(tariffsRes.data);
       }
+
       if (secRes.data) {
         setSectionSettings(secRes.data);
       }
     } catch (err: any) {
-      console.warn('Failed loading delivery settings:', err);
+      setTariffsError(err?.message || 'تعذر جلب التغطية والتسعير المركزي.');
     } finally {
-      setLoadingAreasList(false);
+      setLoadingTariffs(false);
     }
   }, [restaurant.id]);
 
   useEffect(() => {
-    loadDeliveryData();
-  }, [loadDeliveryData]);
+    loadCentralDeliveryData();
+  }, [loadCentralDeliveryData]);
 
   // Quick Open/Close Toggle
   const handleToggleOpen = async () => {
@@ -195,7 +132,11 @@ export const SettingsView: React.FC = () => {
       setErrorMessage(res.error || 'فشل تحديث حالة استقبال الطلبات في قاعدة البيانات.');
     } else {
       setIsOpen(nextState);
-      setSaveSuccess(nextState ? 'تم فتح المطعم لاستقبال طلبات الزبائن بنجاح في قاعدة البيانات.' : 'تم إغلاق المطعم مؤقتًا بنجاح.');
+      setSaveSuccess(
+        nextState
+          ? 'تم فتح المطعم لاستقبال طلبات الزبائن بنجاح في قاعدة البيانات.'
+          : 'تم إغلاق المطعم مؤقتًا بنجاح.'
+      );
       setTimeout(() => setSaveSuccess(null), 4000);
     }
     setIsTogglingOpen(false);
@@ -223,116 +164,29 @@ export const SettingsView: React.FC = () => {
     setIsTogglingDelivery(false);
   };
 
-  // Save Basic Info to Supabase
+  // Save Basic Commercial Info to Supabase (strictly without delivery_fee or max_delivery_radius_km)
   const handleSaveBasic = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
     setSaveSuccess(null);
     setIsSavingBasic(true);
 
-    const fee = typeof deliveryFee === 'number' ? deliveryFee : 25;
-
     const res = await updateRestaurantSettingsDb({
       name,
       description,
       phone,
       address,
-      delivery_fee: fee,
-      max_delivery_radius_km: deliveryRadiusKm,
       is_open: isOpen,
     });
 
     if (!res.success) {
       setErrorMessage(res.error || 'فشل حفظ الإعدادات في قاعدة البيانات.');
     } else {
-      setSaveSuccess('تم حفظ وتحديث بيانات المطعم بنجاح في جدول restaurants بقاعدة البيانات!');
+      setSaveSuccess('تم حفظ وتحديث بيانات المطعم التجارية بنجاح في قاعدة البيانات!');
       setTimeout(() => setSaveSuccess(null), 4000);
       refreshRestaurant();
     }
     setIsSavingBasic(false);
-  };
-
-  // Add Service Area
-  const handleAddServiceArea = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!restaurant.id) {
-      setErrorMessage('معرف المطعم غير متوفر.');
-      return;
-    }
-    if (!selectedGovId || !selectedCenterId || !selectedAreaId) {
-      setErrorMessage('يرجى اختيار المحافظة والمركز والحي / المنطقة بالكامل.');
-      return;
-    }
-
-    setErrorMessage(null);
-    setSaveSuccess(null);
-    setAddingArea(true);
-
-    const fee = typeof newAreaFee === 'number' ? newAreaFee : 25;
-
-    const res = await addRestaurantServiceArea(
-      restaurant.id,
-      selectedGovId,
-      selectedCenterId,
-      selectedAreaId,
-      fee,
-      newAreaNotes
-    );
-
-    if (res.error || !res.data) {
-      setErrorMessage(res.error || 'تعذر إضافة المنطقة المخدومة.');
-    } else {
-      setSaveSuccess('تمت إضافة المنطقة المخدومة ورسوم التوصيل الخاصة بها بنجاح في قاعدة البيانات.');
-      setTimeout(() => setSaveSuccess(null), 4000);
-      setSelectedAreaId('');
-      setNewAreaNotes('');
-      await loadDeliveryData();
-    }
-    setAddingArea(false);
-  };
-
-  // Toggle Service Area is_active
-  const handleToggleAreaActive = async (item: RestaurantServiceAreaItem) => {
-    setErrorMessage(null);
-    const next = !item.is_active;
-    const res = await toggleServiceAreaActive(item.id, next);
-    if (res.error) {
-      setErrorMessage(res.error || 'تعذر تعديل حالة المنطقة.');
-    } else {
-      setServiceAreas((prev) =>
-        prev.map((a) => (a.id === item.id ? { ...a, is_active: next } : a))
-      );
-    }
-  };
-
-  // Delete Service Area
-  const handleDeleteArea = async (item: RestaurantServiceAreaItem) => {
-    setErrorMessage(null);
-    setSaveSuccess(null);
-    const res = await deleteRestaurantServiceArea(item.id, restaurant.id, item.area_id);
-    if (res.error) {
-      setErrorMessage(res.error || 'تعذر حذف المنطقة المخدومة.');
-    } else {
-      setServiceAreas((prev) => prev.filter((a) => a.id !== item.id));
-      setSaveSuccess('تم حذف المنطقة من نطاق الخدمة بنجاح.');
-      setTimeout(() => setSaveSuccess(null), 3000);
-    }
-  };
-
-  // Save Updated Delivery Fee for Area
-  const handleSaveAreaFee = async (areaId: string) => {
-    setErrorMessage(null);
-    const res = await updateAreaDeliveryFee(restaurant.id, areaId, editingFeeValue);
-    if (res.error) {
-      setErrorMessage(res.error || 'تعذر تحديث رسوم التوصيل لهذه المنطقة.');
-    } else {
-      setServiceAreas((prev) =>
-        prev.map((a) => (a.area_id === areaId ? { ...a, delivery_fee: editingFeeValue } : a))
-      );
-      setEditingFeeAreaId(null);
-      setSaveSuccess('تم تحديث رسوم التوصيل للمنطقة بنجاح في قاعدة البيانات.');
-      setTimeout(() => setSaveSuccess(null), 3000);
-    }
   };
 
   return (
@@ -342,22 +196,22 @@ export const SettingsView: React.FC = () => {
         <div>
           <h2 className="text-lg font-black text-slate-900 flex items-center gap-2">
             <Settings className="w-5 h-5 text-amber-500" />
-            إعدادات المطعم ونطاق التوصيل الجغرافي
+            إعدادات المطعم والموقع والتغطية المركزية
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            ضبط حالة التشغيل، المناطق المخدومة ورسوم التوصيل الخاصة بكل حي، والاطلاع على سياسات الإدارة المركزية
+            ضبط حالة التشغيل والبيانات التجارية للمطعم، والاطلاع على مناطق التغطية والتسعير المعينة مركزيًا
           </p>
         </div>
 
         <button
           onClick={() => {
-            loadDeliveryData();
+            loadCentralDeliveryData();
             refreshRestaurant();
           }}
-          disabled={loadingAreasList}
+          disabled={loadingTariffs}
           className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
         >
-          <RefreshCw className={`w-4 h-4 ${loadingAreasList ? 'animate-spin text-amber-600' : ''}`} />
+          <RefreshCw className={`w-4 h-4 ${loadingTariffs ? 'animate-spin text-amber-600' : ''}`} />
           <span>تحديث من السحابة</span>
         </button>
       </div>
@@ -475,276 +329,181 @@ export const SettingsView: React.FC = () => {
         </button>
       </div>
 
-      {/* 2. Hierarchical Geographic Service Areas & Delivery Fees */}
+      {/* 2. Read-Only Central Coverage & Tariffs + Restaurant Geographic Location */}
       <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-5">
-        <div className="border-b border-slate-100 pb-3">
-          <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-            <MapPin className="w-4 h-4 text-amber-600" />
-            نطاق التوصيل الجغرافي والمناطق المخدومة ورسوم التوصيل
-          </h3>
-          <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-            وفقًا للمنظومة الفعلية، يعتمد التوصيل على تحديد المحافظات والمراكز والأحياء المعتمدة وتعيين رسوم التوصيل المخصصة لكل منطقة في جدول restaurant_service_areas وجدول restaurant_area_delivery_fees.
-          </p>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+          <div>
+            <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+              <MapPin className="w-4 h-4 text-amber-600" />
+              نطاق التغطية والتسعير المركزي للمطعم (للقراءة فقط)
+            </h3>
+            <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+              تُدار التغطية الجغرافية ورسوم التوصيل مركزيًا بالكامل من لوحة الإدارة عبر جدول التسعير المركزي{' '}
+              <code className="font-mono text-[11px] bg-slate-100 px-1 py-0.5 rounded text-slate-700">
+                delivery_area_tariffs
+              </code>
+              ، ولا يُسمح بتعديلها أو إضافة نطاقات محلية من تطبيق المطعم.
+            </p>
+          </div>
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 text-slate-700 border border-slate-200 text-[11px] font-bold shrink-0 w-fit">
+            <Lock className="w-3.5 h-3.5 text-amber-600" />
+            <span>للعرض فقط — إدارة مركزية</span>
+          </span>
         </div>
 
-        {/* Add Area Form */}
-        <form onSubmit={handleAddServiceArea} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3 text-xs">
-          <span className="font-bold text-slate-800 block text-xs">
-            إضافة منطقة مخدومة جديدة لنطاق المطعم:
-          </span>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {/* Gov */}
-            <div>
-              <label className="block text-slate-700 font-bold mb-1">المحافظة *</label>
-              <select
-                required
-                value={selectedGovId}
-                onChange={(e) => setSelectedGovId(e.target.value)}
-                disabled={loadingGovs || addingArea}
-                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-amber-500 disabled:opacity-50"
+        {/* Registered Restaurant Geo Location Summary */}
+        <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2.5 text-xs">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-bold text-slate-800 flex items-center gap-1.5">
+              <Compass className="w-4 h-4 text-amber-600" />
+              الموقع الجغرافي المسجل للمطعم:
+            </span>
+            {locationBoundaryStatus?.hasBoundary && (
+              <span
+                className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                  locationBoundaryStatus.valid
+                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                    : 'bg-rose-100 text-rose-800 border border-rose-200'
+                }`}
               >
-                <option value="">-- اختر المحافظة --</option>
-                {governorates.map((g) => (
-                  <option key={g.id} value={g.id}>
-                    {g.name_ar}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Center */}
-            <div>
-              <label className="block text-slate-700 font-bold mb-1">المركز / المدينة *</label>
-              <select
-                required
-                value={selectedCenterId}
-                onChange={(e) => setSelectedCenterId(e.target.value)}
-                disabled={!selectedGovId || loadingCenters || addingArea}
-                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-amber-500 disabled:opacity-50"
-              >
-                <option value="">
-                  {loadingCenters ? 'جارٍ التحميل...' : '-- اختر المركز --'}
-                </option>
-                {centers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name_ar}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* Area */}
-            <div>
-              <label className="block text-slate-700 font-bold mb-1">الحي / المنطقة *</label>
-              <select
-                required
-                value={selectedAreaId}
-                onChange={(e) => setSelectedAreaId(e.target.value)}
-                disabled={!selectedCenterId || loadingAreas || addingArea}
-                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-amber-500 disabled:opacity-50"
-              >
-                <option value="">
-                  {loadingAreas ? 'جارٍ التحميل...' : '-- اختر المنطقة/الحي --'}
-                </option>
-                {areas.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name_ar}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-            <div>
-              <label className="block text-slate-700 font-bold mb-1">
-                رسوم التوصيل لهذه المنطقة (ج.م) *
-              </label>
-              <input
-                type="number"
-                min="0"
-                step="1"
-                required
-                disabled={addingArea}
-                value={newAreaFee}
-                onChange={(e) =>
-                  setNewAreaFee(e.target.value === '' ? '' : parseFloat(e.target.value))
-                }
-                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-amber-500 font-bold"
-                placeholder="25"
-              />
-            </div>
-
-            <div>
-              <label className="block text-slate-700 font-bold mb-1">ملاحظات التوصيل للمنطقة (اختياري)</label>
-              <input
-                type="text"
-                disabled={addingArea}
-                value={newAreaNotes}
-                onChange={(e) => setNewAreaNotes(e.target.value)}
-                placeholder="مثال: التوصيل حتى مدخل الحي الرئيسي فقط..."
-                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-amber-500"
-              />
-            </div>
-          </div>
-
-          <div className="flex justify-end pt-2">
-            <button
-              type="submit"
-              disabled={addingArea || !selectedAreaId}
-              className="px-5 py-2 bg-amber-500 hover:bg-amber-600 disabled:bg-slate-200 disabled:text-slate-400 text-slate-950 font-black rounded-xl text-xs flex items-center gap-1.5 shadow-xs cursor-pointer disabled:cursor-not-allowed"
-            >
-              {addingArea ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>جارٍ الإضافة في قاعدة البيانات...</span>
-                </>
-              ) : (
-                <>
-                  <Plus className="w-4 h-4" />
-                  <span>إضافة المنطقة إلى نطاق الخدمة</span>
-                </>
-              )}
-            </button>
-          </div>
-        </form>
-
-        {/* Existing Service Areas List */}
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h4 className="text-xs font-bold text-slate-800">
-              المناطق المسجلة حاليًا لنطاق خدمة المطعم ({serviceAreas.length}):
-            </h4>
-            {loadingAreasList && (
-              <span className="text-[11px] text-amber-600 flex items-center gap-1 font-bold">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                تحميل المناطق...
+                {locationBoundaryStatus.valid ? 'داخل الحدود المعتمدة' : 'خارج الحدود المعتمدة'}
               </span>
             )}
           </div>
 
-          {serviceAreas.length === 0 ? (
-            <div className="p-8 bg-slate-50 border border-dashed border-slate-200 rounded-2xl text-center text-xs text-slate-400">
-              لا توجد مناطق مخدومة مسجلة لهذا المطعم حتى الآن. يرجى اختيار وإضافة الأحياء التي يمكنك التوصيل إليها أعلاه.
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            <div className="bg-white p-2.5 rounded-xl border border-slate-200">
+              <span className="text-[10px] text-slate-400 block">المحافظة:</span>
+              <span className="font-bold text-slate-800">{restaurant.governorate || 'غير محدد'}</span>
+            </div>
+            <div className="bg-white p-2.5 rounded-xl border border-slate-200">
+              <span className="text-[10px] text-slate-400 block">المركز / المدينة:</span>
+              <span className="font-bold text-slate-800">{restaurant.city || 'غير محدد'}</span>
+            </div>
+            <div className="bg-white p-2.5 rounded-xl border border-slate-200">
+              <span className="text-[10px] text-slate-400 block">الحي / المنطقة:</span>
+              <span className="font-bold text-slate-800">{restaurant.area || 'المركز بالكامل'}</span>
+            </div>
+          </div>
+
+          <div className="text-[11px] text-slate-600 flex flex-wrap items-center justify-between gap-2 pt-1">
+            <span>
+              إحداثيات GPS:{' '}
+              <strong className="font-mono dir-ltr inline-block text-slate-800">
+                {restaurant.latitude !== null && restaurant.longitude !== null
+                  ? `${restaurant.latitude.toFixed(6)}, ${restaurant.longitude.toFixed(6)}`
+                  : 'غير مسجلة'}
+              </strong>
+            </span>
+          </div>
+        </div>
+
+        {/* Central Tariffs Error Notice */}
+        {tariffsError && (
+          <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex items-start gap-2.5 text-xs text-amber-900">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <p className="font-bold">تعذر قراءة جدول التسعير والتغطية المركزي</p>
+              <p className="text-[11px] text-amber-800 leading-relaxed">{tariffsError}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Central Tariffs Read-Only List */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h4 className="text-xs font-bold text-slate-800">
+              مناطق وتسعيرات توصيل المطعم المعتمدة مركزيًا ({centralTariffs.length}):
+            </h4>
+            {loadingTariffs && (
+              <span className="text-[11px] text-amber-600 flex items-center gap-1 font-bold">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                جاري الجلب من الإدارة المركزية...
+              </span>
+            )}
+          </div>
+
+          {!tariffsError && centralTariffs.length === 0 ? (
+            <div className="p-6 bg-slate-50 border border-dashed border-slate-200 rounded-2xl text-center text-xs text-slate-500 space-y-1">
+              <p className="font-bold text-slate-700">
+                لا توجد تسعيرات مخصصة لتوصيل المطعم مسجلة حاليًا في النظام المركزي.
+              </p>
+              <p className="text-[11px] text-slate-400">
+                يتم احتساب التغطية ورسوم التوصيل لكل طلب تلقائيًا عند إنشاء الطلب وفق التسعير المركزي في لوحة الإدارة.
+              </p>
             </div>
           ) : (
             <div className="divide-y divide-slate-100 border border-slate-200 rounded-2xl overflow-hidden bg-white">
-              {serviceAreas.map((item) => {
-                const isEditingFee = editingFeeAreaId === item.area_id;
-
-                return (
-                  <div
-                    key={item.id}
-                    className="p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs hover:bg-slate-50 transition-colors"
-                  >
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`w-2.5 h-2.5 rounded-full ${
-                            item.is_active ? 'bg-emerald-500' : 'bg-slate-300'
-                          }`}
-                        />
-                        <span className="font-bold text-slate-900 text-xs">
-                          {item.area_name}
-                        </span>
-                        <span className="text-slate-400 text-[11px]">
-                          ({item.center_name} - {item.governorate_name})
-                        </span>
-                      </div>
-
-                      {item.fee_notes && (
-                        <p className="text-[11px] text-slate-500 pr-4">{item.fee_notes}</p>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-2.5 self-end sm:self-center">
-                      {/* Delivery Fee Box */}
-                      {isEditingFee ? (
-                        <div className="flex items-center gap-1">
-                          <input
-                            type="number"
-                            min="0"
-                            value={editingFeeValue}
-                            onChange={(e) =>
-                              setEditingFeeValue(parseFloat(e.target.value) || 0)
-                            }
-                            className="w-16 px-2 py-1 bg-white border border-amber-400 rounded-lg text-xs font-bold text-center"
-                          />
-                          <button
-                            onClick={() => handleSaveAreaFee(item.area_id)}
-                            className="p-1 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600"
-                            title="حفظ الرسوم"
-                          >
-                            <Check className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => {
-                            setEditingFeeAreaId(item.area_id);
-                            setEditingFeeValue(item.delivery_fee ?? 25);
-                          }}
-                          className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 font-bold rounded-lg border border-amber-200 text-xs cursor-pointer transition-colors"
-                          title="انقر لتعديل رسوم التوصيل لهذه المنطقة"
-                        >
-                          {item.delivery_fee ?? 25} ج.م
-                        </button>
-                      )}
-
-                      {/* Active Toggle */}
-                      <button
-                        onClick={() => handleToggleAreaActive(item)}
-                        className={`px-2.5 py-1 rounded-lg font-bold text-[11px] transition-colors cursor-pointer ${
-                          item.is_active
-                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                            : 'bg-slate-100 text-slate-600'
+              {centralTariffs.map((item) => (
+                <div
+                  key={item.id}
+                  className="p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs"
+                >
+                  <div className="space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={`w-2.5 h-2.5 rounded-full ${
+                          item.is_active ? 'bg-emerald-500' : 'bg-slate-300'
                         }`}
-                      >
-                        {item.is_active ? 'نشط' : 'معطل'}
-                      </button>
-
-                      {/* Delete */}
-                      <button
-                        onClick={() => handleDeleteArea(item)}
-                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                        title="حذف المنطقة من نطاق الخدمة"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      />
+                      <span className="font-bold text-slate-900">{item.area_name}</span>
+                      <span className="text-slate-400 text-[11px]">
+                        ({item.center_name} - {item.governorate_name})
+                      </span>
                     </div>
+
+                    {item.notes && (
+                      <p className="text-[11px] text-slate-500 pr-4">{item.notes}</p>
+                    )}
                   </div>
-                );
-              })}
+
+                  <div className="flex flex-wrap items-center gap-2 self-end sm:self-center">
+                    {item.delivery_fee !== null && (
+                      <span className="px-2.5 py-1 bg-amber-50 text-amber-900 font-bold rounded-lg border border-amber-200 text-xs">
+                        رسوم التوصيل: {item.delivery_fee} ج.م
+                      </span>
+                    )}
+
+                    {item.min_order_amount !== null && (
+                      <span className="px-2.5 py-1 bg-slate-100 text-slate-700 font-semibold rounded-lg border border-slate-200 text-[11px]">
+                        حد أدنى: {item.min_order_amount} ج.م
+                      </span>
+                    )}
+
+                    <span
+                      className={`px-2.5 py-1 rounded-lg font-bold text-[11px] ${
+                        item.is_active
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                          : 'bg-slate-100 text-slate-600 border border-slate-200'
+                      }`}
+                    >
+                      {item.is_active ? 'نشط' : 'غير نشط'}
+                    </span>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
       </div>
 
-      {/* 3. Central System Administration Restrictions (Read-only) */}
+      {/* 3. Central System Administration Policies (Read-only) */}
       <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 space-y-3">
         <div className="flex items-center gap-2 font-bold text-slate-900 text-xs">
-          <Lock className="w-4 h-4 text-amber-600" />
-          <span>سياسات وإعدادات الإدارة المركزية (جدول restaurant_section_settings — للقراءة فقط)</span>
+          <ShieldCheck className="w-4 h-4 text-amber-600" />
+          <span>سياسات وإعدادات الإدارة المركزية (للقراءة فقط)</span>
         </div>
 
         <p className="text-[11px] text-slate-600 leading-relaxed">
           هذه الإعدادات تحددها إدارة منظومة طلباتي مركزيًا لضبط معايير الخدمة والتسوية، ولا يمكن تعديلها بواسطة المطعم:
         </p>
 
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-xs pt-1">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs pt-1">
           <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-1">
             <span className="text-slate-400 block text-[10px]">حالة قسم المطاعم بالمنظومة:</span>
             <span className="font-extrabold text-emerald-700 text-xs flex items-center gap-1">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
               {sectionSettings?.section_enabled !== false ? 'مفعل ويعمل' : 'معطل مركزيًا'}
-            </span>
-          </div>
-
-          <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-1">
-            <span className="text-slate-400 block text-[10px]">الحد الأقصى للتوصيل (مركزي):</span>
-            <span className="font-extrabold text-amber-800 text-xs">
-              {sectionSettings?.global_max_delivery_radius_km || 15} كم كحد أقصى
             </span>
           </div>
 
@@ -758,7 +517,7 @@ export const SettingsView: React.FC = () => {
           <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-1">
             <span className="text-slate-400 block text-[10px]">نسبة عمولة الإدارة المعتمدة:</span>
             <span className="font-extrabold text-amber-600 text-xs">
-              10% على صافي الطعام
+              {restaurant.adminCommissionPercent}% على صافي الطعام
             </span>
           </div>
         </div>
@@ -809,48 +568,15 @@ export const SettingsView: React.FC = () => {
             />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-slate-700 font-bold mb-1">العنوان التفصيلي</label>
-              <input
-                type="text"
-                disabled={isSavingBasic}
-                value={address}
-                onChange={(e) => setAddress(e.target.value)}
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs disabled:opacity-50"
-              />
-            </div>
-
-            <div>
-              <label className="block text-slate-700 font-bold mb-1">رسوم التوصيل العامة (ج.م) *</label>
-              <input
-                type="number"
-                min="0"
-                step="1"
-                disabled={isSavingBasic}
-                value={deliveryFee}
-                onChange={(e) =>
-                  setDeliveryFee(e.target.value === '' ? '' : parseFloat(e.target.value))
-                }
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold disabled:opacity-50"
-              />
-            </div>
-
-            <div>
-              <label className="block text-slate-700 font-bold mb-1">أقصى نطاق توصيل عام (كم) *</label>
-              <input
-                type="number"
-                min="1"
-                max="30"
-                step="0.5"
-                disabled={isSavingBasic}
-                value={deliveryRadiusKm}
-                onChange={(e) =>
-                  setDeliveryRadiusKm(e.target.value === '' ? 5 : parseFloat(e.target.value))
-                }
-                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold disabled:opacity-50"
-              />
-            </div>
+          <div>
+            <label className="block text-slate-700 font-bold mb-1">العنوان التفصيلي</label>
+            <input
+              type="text"
+              disabled={isSavingBasic}
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+              className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs disabled:opacity-50"
+            />
           </div>
 
           {/* Logo & Visuals note */}
@@ -887,7 +613,8 @@ export const SettingsView: React.FC = () => {
           </div>
 
           <p className="text-xs text-slate-500 leading-relaxed">
-            مواعيد العمل والعطلات محددة وفق وثيقة الاعتماد المركزي، ولا توجد أعمدة مخصصة لها في جدول <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-700 font-mono">restaurants</code> الفعلي. يتم التحكم في استقبال الطلبات لحظيًا عبر زر الفتح/الإغلاق المعتمد أعلاه.
+            مواعيد العمل والعطلات محددة وفق وثيقة الاعتماد المركزي، ولا توجد أعمدة مخصصة لها في جدول{' '}
+            <code className="bg-slate-100 px-1 py-0.5 rounded text-slate-700 font-mono">restaurants</code> الفعلي. يتم التحكم في استقبال الطلبات لحظيًا عبر زر الفتح/الإغلاق المعتمد أعلاه.
           </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
@@ -934,7 +661,7 @@ export const SettingsView: React.FC = () => {
             ) : (
               <>
                 <Save className="w-4 h-4" />
-                <span>حفظ بيانات وإعدادات المطعم</span>
+                <span>حفظ بيانات المطعم الأساسية</span>
               </>
             )}
           </button>

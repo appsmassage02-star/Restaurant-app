@@ -12,6 +12,8 @@ import {
   XCircle,
 } from 'lucide-react';
 
+import { GeoBoundaryValidationResult } from '../../services/geographicService';
+
 interface LocationPickerMapProps {
   latitude: number | null;
   longitude: number | null;
@@ -19,6 +21,8 @@ interface LocationPickerMapProps {
   governorateName?: string;
   centerName?: string;
   areaName?: string;
+  focusCoordinates?: { lat: number; lng: number } | null;
+  boundaryValidation?: GeoBoundaryValidationResult | null;
 }
 
 type GpsStatus = 'idle' | 'locating' | 'success' | 'error';
@@ -49,6 +53,8 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
   governorateName,
   centerName,
   areaName,
+  focusCoordinates,
+  boundaryValidation,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -154,6 +160,15 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
       }
     }
   }, [latitude, longitude, hasCoordinates]);
+
+  // Pan viewport (without placing marker or saving coordinates) when selected geo region changes and no pin is placed yet
+  useEffect(() => {
+    if (mapInstanceRef.current && !hasCoordinates && focusCoordinates) {
+      mapInstanceRef.current.setView([focusCoordinates.lat, focusCoordinates.lng], 12, {
+        animate: true,
+      });
+    }
+  }, [focusCoordinates, hasCoordinates]);
 
   // Request real device geolocation via navigator.geolocation
   const handleGetCurrentLocation = useCallback(() => {
@@ -381,6 +396,27 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
           </span>
         </div>
       </div>
+
+      {/* Boundary Validation Feedback */}
+      {hasCoordinates && boundaryValidation && (
+        boundaryValidation.hasBoundary ? (
+          boundaryValidation.valid ? (
+            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2 text-xs text-emerald-800 font-semibold">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{boundaryValidation.message}</span>
+            </div>
+          ) : (
+            <div className="p-3 bg-rose-50 border border-rose-300 rounded-xl flex items-start gap-2 text-xs text-rose-800 font-bold">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+              <span>{boundaryValidation.message}</span>
+            </div>
+          )
+        ) : (
+          <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[11px] text-slate-600">
+            ملاحظة: لا توجد حدود مضلعة مسجلة في القاعدة الجغرافية لهذه المنطقة حاليًا؛ سيتم اعتماد الإحداثيات الفعلية المحددة دون حجب.
+          </div>
+        )
+      )}
     </div>
   );
 };

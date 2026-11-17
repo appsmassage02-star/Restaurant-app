@@ -24,13 +24,11 @@ export const INITIAL_RESTAURANT: RestaurantProfile = {
   logo: 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=200&auto=format&fit=crop&q=80',
   coverImage: 'https://images.unsplash.com/photo-1544025162-d76694265947?w=1200&auto=format&fit=crop&q=80',
   address: 'شارع المشاية السفلية، بجوار نادي جزيرة الورد',
-  governorate: 'الدقهلية',
-  city: 'المنصورة',
-  latitude: 31.0409,
-  longitude: 31.3785,
-  deliveryRadiusKm: 6.5,
-  maxAllowedRadiusKm: 12.0, // حد إداري أقصى
-  deliveryFee: 25.0, // رسوم التوصيل المحددة وفق اتفاق الإدارة
+  governorate: 'سوهاج',
+  city: 'سوهاج',
+  area: '',
+  latitude: 26.5591,
+  longitude: 31.6957,
   restaurantDeliveryEnabled: true,
   isOpen: true,
   openingHours: 'يوميًا من 11:00 صباحًا حتى 02:00 بعد منتصف الليل',

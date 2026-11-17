@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Store,
   User,
@@ -28,11 +28,13 @@ import {
   fetchCenters,
   fetchAreas,
   fetchRestaurantCategories,
+  verifyPointInGeoBoundary,
+  extractGeoFocusPoint,
 } from '../../services/geographicService';
 import {
-  FoodGovernorate,
-  FoodCenter,
-  FoodArea,
+  GeoGovernorate,
+  GeoCenter,
+  GeoArea,
   RestaurantCategory,
   CreateRestaurantPayload,
 } from '../../types/database';
@@ -83,10 +85,10 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
   const [latitude, setLatitude] = useState<number | null>(null);
   const [longitude, setLongitude] = useState<number | null>(null);
 
-  // Dynamic Geographic state
-  const [governorates, setGovernorates] = useState<FoodGovernorate[]>([]);
-  const [centers, setCenters] = useState<FoodCenter[]>([]);
-  const [areas, setAreas] = useState<FoodArea[]>([]);
+  // Dynamic Geographic state (Central geo_* tables)
+  const [governorates, setGovernorates] = useState<GeoGovernorate[]>([]);
+  const [centers, setCenters] = useState<GeoCenter[]>([]);
+  const [areas, setAreas] = useState<GeoArea[]>([]);
   const [categories, setCategories] = useState<RestaurantCategory[]>([]);
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<(string | number)[]>([]);
 
@@ -136,7 +138,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
     loadInitialData();
   }, [loadInitialData]);
 
-  // When Governorates change, reset dependent dropdowns and fetch sequential Centers from food_centers
+  // When Governorates change, reset dependent dropdowns and fetch sequential Centers from geo_centers
   useEffect(() => {
     let isMounted = true;
     if (!selectedGovId) {
@@ -175,7 +177,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
     };
   }, [selectedGovId]);
 
-  // When Center changes, reset dependent areas and fetch sequential Areas from food_areas
+  // When Center changes, reset dependent areas and fetch sequential Areas directly from geo_areas
   useEffect(() => {
     let isMounted = true;
     if (!selectedCenterId) {
@@ -202,6 +204,29 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
       isMounted = false;
     };
   }, [selectedCenterId]);
+
+  const selectedGov = governorates.find((g) => String(g.id) === String(selectedGovId));
+  const selectedCenter = centers.find((c) => String(c.id) === String(selectedCenterId));
+  const selectedArea = areas.find((a) => String(a.id) === String(selectedAreaId));
+
+  const boundaryValidation = useMemo(() => {
+    if (latitude === null || longitude === null || isNaN(latitude) || isNaN(longitude)) {
+      return null;
+    }
+    return verifyPointInGeoBoundary(latitude, longitude, {
+      area: selectedArea,
+      center: selectedCenter,
+      governorate: selectedGov,
+    });
+  }, [latitude, longitude, selectedArea, selectedCenter, selectedGov]);
+
+  const focusCoordinates = useMemo(() => {
+    return (
+      extractGeoFocusPoint(selectedArea) ||
+      extractGeoFocusPoint(selectedCenter) ||
+      extractGeoFocusPoint(selectedGov)
+    );
+  }, [selectedArea, selectedCenter, selectedGov]);
 
   const toggleCategory = (catId: string | number) => {
     if (selectedCategoryIds.includes(catId)) {
@@ -235,6 +260,9 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
     }
     if (latitude < 21 || latitude > 33 || longitude < 24 || longitude > 38) {
       return 'الإحداثيات المحددة تقع خارج النطاق الجغرافي لجمهورية مصر العربية. يرجى ضبط النقطة على الخريطة.';
+    }
+    if (boundaryValidation && boundaryValidation.hasBoundary && !boundaryValidation.valid) {
+      return boundaryValidation.message || 'الإحداثيات المحددة تقع خارج الحدود الجغرافية المعتمدة للنطاق المختار.';
     }
     return null;
   };
@@ -341,10 +369,6 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
       setErrorMsg(err?.message || 'حدث خطأ غير متوقع أثناء إرسال طلب التسجيل.');
     }
   };
-
-  const selectedGov = governorates.find((g) => String(g.id) === String(selectedGovId));
-  const selectedCenter = centers.find((c) => String(c.id) === String(selectedCenterId));
-  const selectedArea = areas.find((a) => String(a.id) === String(selectedAreaId));
 
   const selectedGovName = selectedGov?.name_ar || (selectedGov as any)?.name || '';
   const selectedCenterName = selectedCenter?.name_ar || (selectedCenter as any)?.name || '';
@@ -561,7 +585,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
                   بيانات المطعم والموقع والمناطق الجغرافية الفعلية
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  يتم جلب المحافظات والمراكز والمناطق مباشرة من جداول <code className="font-mono text-amber-700">food_governorates</code> و <code className="font-mono text-amber-700">food_centers</code> و <code className="font-mono text-amber-700">food_areas</code>.
+                  يتم جلب المحافظات والمراكز والمناطق من المصدر الجغرافي المركزي المعتمد (نطاق الإطلاق الحالي: محافظة سوهاج).
                 </p>
               </div>
 
@@ -643,7 +667,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
                   {/* Governorate */}
                   <div>
                     <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                      المحافظة (food_governorates) *
+                      المحافظة (نطاق الإطلاق: سوهاج) *
                     </label>
                     <select
                       value={selectedGovId}
@@ -668,7 +692,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
                   {/* Center */}
                   <div>
                     <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                      المركز / المدينة (food_centers) *
+                      المركز / المدينة *
                     </label>
                     <select
                       value={selectedCenterId}
@@ -693,7 +717,7 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
                   {/* Area */}
                   <div>
                     <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                      المنطقة / الحي (food_areas)
+                      المنطقة / الحي
                     </label>
                     <select
                       value={selectedAreaId}
@@ -774,6 +798,8 @@ export const RegisterPage: React.FC<RegisterPageProps> = ({
                 governorateName={selectedGovName}
                 centerName={selectedCenterName}
                 areaName={selectedAreaName}
+                focusCoordinates={focusCoordinates}
+                boundaryValidation={boundaryValidation}
               />
             </div>
           )}
