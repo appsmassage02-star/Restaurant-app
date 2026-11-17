@@ -498,13 +498,17 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
                     <div>
                       <span className="text-[11px] text-slate-400 block">إجمالي العميل:</span>
                       <span className="text-base font-black text-slate-900">
-                        {ord.grandTotal.toLocaleString('ar-EG')} ج.م
+                        {ord.grandTotal !== null
+                          ? `${ord.grandTotal.toLocaleString('ar-EG')} ج.م`
+                          : 'غير محفوظ'}
                       </span>
                     </div>
                     <div className="text-left">
                       <span className="text-[10px] text-slate-400 block">صافي المطعم:</span>
                       <span className="text-xs font-bold text-emerald-700">
-                        {ord.netRestaurantDue.toLocaleString('ar-EG')} ج.م
+                        {ord.netRestaurantDue !== null
+                          ? `${ord.netRestaurantDue.toLocaleString('ar-EG')} ج.م`
+                          : 'غير محفوظ'}
                       </span>
                     </div>
                   </div>

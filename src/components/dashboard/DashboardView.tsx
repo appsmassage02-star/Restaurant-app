@@ -316,10 +316,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     </td>
                     <td className="py-3.5 px-4">
                       <span className="font-black text-slate-900">
-                        {ord.grandTotal.toLocaleString('ar-EG')} ج.م
+                        {ord.grandTotal !== null
+                          ? `${ord.grandTotal.toLocaleString('ar-EG')} ج.م`
+                          : 'غير محفوظ'}
                       </span>
                       <span className="block text-[10px] text-slate-400">
-                        صافي المطعم: {ord.netRestaurantDue.toLocaleString('ar-EG')} ج.م
+                        صافي المطعم:{' '}
+                        {ord.netRestaurantDue !== null
+                          ? `${ord.netRestaurantDue.toLocaleString('ar-EG')} ج.م`
+                          : 'غير محفوظ'}
                       </span>
                     </td>
                     <td className="py-3.5 px-4">{getStatusBadge(ord.status, ord.rawStatus, ord.rawRoute || ord.route)}</td>

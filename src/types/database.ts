@@ -84,18 +84,25 @@ export interface GeoArea {
   updated_at?: string;
 }
 
+export type DeliveryScopeLevel = 'area' | 'center' | 'governorate';
+
 export interface DbDeliveryAreaTariff {
   id: string;
   service_type: string;
   delivery_owner: string;
-  restaurant_id?: string | null;
-  governorate_id?: string | null;
-  center_id?: string | null;
-  area_id?: string | null;
+  restaurant_id: string | null;
+  governorate_id: string | null;
+  center_id: string | null;
+  area_id: string | null;
+  scope_level: DeliveryScopeLevel | string | null;
+  base_delivery_fee: number | null;
+  admin_commission: number | null;
+  driver_net_fee: number | null;
+  customer_delivery_fee: number | null;
+  is_enabled: boolean | null;
   notes?: string | null;
   created_at?: string;
   updated_at?: string;
-  [key: string]: any;
 }
 
 export interface RestaurantCategory {
@@ -179,14 +186,20 @@ export interface DbRestaurantOrder {
   delivery_governorate_id?: string | null;
   delivery_center_id?: string | null;
   delivery_area_id?: string | null;
-  food_subtotal: number;
-  discount_amount: number;
-  delivery_fee: number;
-  customer_total: number;
+  food_subtotal: number | null;
+  discount_amount: number | null;
+  delivery_fee?: number | null;
+  customer_total?: number | null;
   commission_percent_snapshot?: number | null;
   driver_fee_share?: number | null;
   admin_fee_share?: number | null;
   restaurant_fee_share?: number | null;
+  delivery_base_fee_snapshot?: number | null;
+  delivery_admin_commission_snapshot?: number | null;
+  delivery_driver_net_snapshot?: number | null;
+  customer_delivery_fee_snapshot?: number | null;
+  platform_delivery_tariff_id?: string | null;
+  restaurant_delivery_tariff_id?: string | null;
   payment_method: string;
   restaurant_confirmed_at?: string | null;
   restaurant_rejected_at?: string | null;
@@ -197,7 +210,6 @@ export interface DbRestaurantOrder {
   delivery_governorate_name_snapshot?: string | null;
   delivery_center_name_snapshot?: string | null;
   delivery_area_name_snapshot?: string | null;
-  [key: string]: any;
 }
 
 export interface DbRestaurantOrderItem {

@@ -450,7 +450,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           {
             id: `notif-${Date.now()}-${newOrder.id}`,
             title: `وصول طلب جديد! #${newOrder.orderNumber}`,
-            message: `طلب جديد بقيمة ${newOrder.grandTotal} ج.م من العميل ${newOrder.customer.name}`,
+            message: `طلب جديد بقيمة ${newOrder.grandTotal !== null ? `${newOrder.grandTotal} ج.م` : 'غير محدد'} من العميل ${newOrder.customer.name}`,
             timestamp: new Date().toISOString(),
             type: 'ORDER',
             read: false,
@@ -1468,11 +1468,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const totalOrdersCount = orders.length;
 
   const completedOrders = orders.filter((o) => o.status === 'COMPLETED');
-  const totalFoodSales = completedOrders.reduce((sum, o) => sum + o.subtotal, 0);
-  const totalDiscounts = completedOrders.reduce((sum, o) => sum + o.discountTotal, 0);
-  const netFoodSales = completedOrders.reduce((sum, o) => sum + o.foodTotal, 0);
-  const totalAdminCommission = completedOrders.reduce((sum, o) => sum + o.adminCommissionAmount, 0);
-  const totalNetRestaurantDue = completedOrders.reduce((sum, o) => sum + o.netRestaurantDue, 0);
+  const totalFoodSales = completedOrders.reduce((sum, o) => sum + (o.subtotal ?? 0), 0);
+  const totalDiscounts = completedOrders.reduce((sum, o) => sum + (o.discountTotal ?? 0), 0);
+  const netFoodSales = completedOrders.reduce((sum, o) => sum + (o.foodTotal ?? 0), 0);
+  const totalAdminCommission = completedOrders.reduce((sum, o) => sum + (o.adminCommissionAmount ?? 0), 0);
+  const totalNetRestaurantDue = completedOrders.reduce((sum, o) => sum + (o.netRestaurantDue ?? 0), 0);
 
   const settledPayouts = movements
     .filter((m) => m.type === 'PARTIAL_SETTLEMENT' || m.type === 'CASH_PAYOUT')

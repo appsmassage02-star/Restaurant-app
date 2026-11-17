@@ -50,6 +50,7 @@ export const SettingsView: React.FC = () => {
 
   // Central section settings (Read-only from restaurant_section_settings)
   const [sectionSettings, setSectionSettings] = useState<RestaurantSectionSettings | null>(null);
+  const [sectionSettingsError, setSectionSettingsError] = useState<string | null>(null);
 
   // Feedback
   const [isSavingBasic, setIsSavingBasic] = useState(false);
@@ -90,6 +91,7 @@ export const SettingsView: React.FC = () => {
     if (!restaurant.id) return;
     setLoadingTariffs(true);
     setTariffsError(null);
+    setSectionSettingsError(null);
     try {
       const [tariffsRes, secRes] = await Promise.all([
         fetchRestaurantCentralTariffs(restaurant.id),
@@ -103,7 +105,10 @@ export const SettingsView: React.FC = () => {
         setCentralTariffs(tariffsRes.data);
       }
 
-      if (secRes.data) {
+      if (secRes.error) {
+        setSectionSettingsError(secRes.error);
+        setSectionSettings(null);
+      } else {
         setSectionSettings(secRes.data);
       }
     } catch (err: any) {
@@ -434,54 +439,78 @@ export const SettingsView: React.FC = () => {
             </div>
           ) : (
             <div className="divide-y divide-slate-100 border border-slate-200 rounded-2xl overflow-hidden bg-white">
-              {centralTariffs.map((item) => (
-                <div
-                  key={item.id}
-                  className="p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs"
-                >
-                  <div className="space-y-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span
-                        className={`w-2.5 h-2.5 rounded-full ${
-                          item.is_active ? 'bg-emerald-500' : 'bg-slate-300'
-                        }`}
-                      />
-                      <span className="font-bold text-slate-900">{item.area_name}</span>
-                      <span className="text-slate-400 text-[11px]">
-                        ({item.center_name} - {item.governorate_name})
-                      </span>
+              {centralTariffs.map((item) => {
+                const scopeLabel =
+                  item.resolved_scope_level === 'area'
+                    ? 'مستوى المنطقة'
+                    : item.resolved_scope_level === 'center'
+                    ? 'مستوى المركز'
+                    : 'مستوى المحافظة';
+
+                return (
+                  <div
+                    key={item.id}
+                    className="p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs"
+                  >
+                    <div className="space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span
+                          className={`w-2.5 h-2.5 rounded-full ${
+                            item.is_enabled ? 'bg-emerald-500' : 'bg-slate-300'
+                          }`}
+                        />
+                        <span className="font-bold text-slate-900">{item.area_name}</span>
+                        <span className="text-slate-400 text-[11px]">
+                          ({item.center_name} - {item.governorate_name})
+                        </span>
+                        <span className="px-2 py-0.5 bg-slate-100 text-slate-700 rounded-md border border-slate-200 text-[10px] font-bold">
+                          {scopeLabel}
+                        </span>
+                      </div>
+
+                      {item.notes && (
+                        <p className="text-[11px] text-slate-500 pr-4">{item.notes}</p>
+                      )}
                     </div>
 
-                    {item.notes && (
-                      <p className="text-[11px] text-slate-500 pr-4">{item.notes}</p>
-                    )}
-                  </div>
+                    <div className="flex flex-wrap items-center gap-2 self-end sm:self-center">
+                      {item.customer_delivery_fee !== null && (
+                        <span className="px-2.5 py-1 bg-amber-50 text-amber-900 font-bold rounded-lg border border-amber-200 text-xs">
+                          رسوم العميل: {item.customer_delivery_fee} ج.م
+                        </span>
+                      )}
 
-                  <div className="flex flex-wrap items-center gap-2 self-end sm:self-center">
-                    {item.delivery_fee !== null && (
-                      <span className="px-2.5 py-1 bg-amber-50 text-amber-900 font-bold rounded-lg border border-amber-200 text-xs">
-                        رسوم التوصيل: {item.delivery_fee} ج.م
+                      {item.base_delivery_fee !== null && (
+                        <span className="px-2.5 py-1 bg-slate-100 text-slate-700 font-semibold rounded-lg border border-slate-200 text-[11px]">
+                          الأجرة الأساسية: {item.base_delivery_fee} ج.م
+                        </span>
+                      )}
+
+                      {item.admin_commission !== null && (
+                        <span className="px-2.5 py-1 bg-slate-100 text-slate-700 font-semibold rounded-lg border border-slate-200 text-[11px]">
+                          عمولة التوصيل: {item.admin_commission} ج.م
+                        </span>
+                      )}
+
+                      {item.driver_net_fee !== null && (
+                        <span className="px-2.5 py-1 bg-blue-50 text-blue-800 font-semibold rounded-lg border border-blue-200 text-[11px]">
+                          صافي المندوب: {item.driver_net_fee} ج.م
+                        </span>
+                      )}
+
+                      <span
+                        className={`px-2.5 py-1 rounded-lg font-bold text-[11px] ${
+                          item.is_enabled
+                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                            : 'bg-slate-100 text-slate-600 border border-slate-200'
+                        }`}
+                      >
+                        {item.is_enabled ? 'مفعّل' : 'معطّل'}
                       </span>
-                    )}
-
-                    {item.min_order_amount !== null && (
-                      <span className="px-2.5 py-1 bg-slate-100 text-slate-700 font-semibold rounded-lg border border-slate-200 text-[11px]">
-                        حد أدنى: {item.min_order_amount} ج.م
-                      </span>
-                    )}
-
-                    <span
-                      className={`px-2.5 py-1 rounded-lg font-bold text-[11px] ${
-                        item.is_active
-                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                          : 'bg-slate-100 text-slate-600 border border-slate-200'
-                      }`}
-                    >
-                      {item.is_active ? 'نشط' : 'غير نشط'}
-                    </span>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -498,20 +527,36 @@ export const SettingsView: React.FC = () => {
           هذه الإعدادات تحددها إدارة منظومة طلباتي مركزيًا لضبط معايير الخدمة والتسوية، ولا يمكن تعديلها بواسطة المطعم:
         </p>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs pt-1">
+        {sectionSettingsError && (
+          <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-900 font-bold flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>{sectionSettingsError}</span>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs pt-1">
           <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-1">
             <span className="text-slate-400 block text-[10px]">حالة قسم المطاعم بالمنظومة:</span>
-            <span className="font-extrabold text-emerald-700 text-xs flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              {sectionSettings?.section_enabled !== false ? 'مفعل ويعمل' : 'معطل مركزيًا'}
-            </span>
-          </div>
-
-          <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-1">
-            <span className="text-slate-400 block text-[10px]">مهلة انتظار كابتن التوصيل:</span>
-            <span className="font-extrabold text-slate-800 text-xs">
-              {sectionSettings?.no_driver_timeout_minutes || 10} دقائق
-            </span>
+            {sectionSettings ? (
+              sectionSettings.section_enabled === null ? (
+                <span className="font-bold text-amber-700 text-xs">غير محدد في الإعداد المركزي</span>
+              ) : (
+                <span
+                  className={`font-extrabold text-xs flex items-center gap-1 ${
+                    sectionSettings.section_enabled ? 'text-emerald-700' : 'text-rose-700'
+                  }`}
+                >
+                  <span
+                    className={`w-2 h-2 rounded-full ${
+                      sectionSettings.section_enabled ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'
+                    }`}
+                  />
+                  {sectionSettings.section_enabled ? 'مفعل ويعمل' : 'معطل مركزيًا'}
+                </span>
+              )
+            ) : (
+              <span className="font-bold text-slate-500 text-xs">غير متاح من القاعدة المركزية</span>
+            )}
           </div>
 
           <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-1">

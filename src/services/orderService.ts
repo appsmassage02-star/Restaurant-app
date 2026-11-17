@@ -156,8 +156,66 @@ export function getArabicRouteLabel(route: string | ExecutionRoute): string {
   return String(route || 'غير محدد');
 }
 
+const RESTAURANT_ORDER_SELECT_COLUMNS = [
+  'id',
+  'order_number',
+  'customer_user_id',
+  'restaurant_id',
+  'fulfillment_route',
+  'status',
+  'restaurant_name_snapshot',
+  'restaurant_phone_snapshot',
+  'restaurant_latitude_snapshot',
+  'restaurant_longitude_snapshot',
+  'customer_name',
+  'customer_phone',
+  'delivery_address',
+  'delivery_latitude',
+  'delivery_longitude',
+  'delivery_governorate_id',
+  'delivery_center_id',
+  'delivery_area_id',
+  'delivery_governorate_name_snapshot',
+  'delivery_center_name_snapshot',
+  'delivery_area_name_snapshot',
+  'food_subtotal',
+  'discount_amount',
+  'delivery_fee',
+  'customer_total',
+  'commission_percent_snapshot',
+  'driver_fee_share',
+  'admin_fee_share',
+  'restaurant_fee_share',
+  'delivery_base_fee_snapshot',
+  'delivery_admin_commission_snapshot',
+  'delivery_driver_net_snapshot',
+  'customer_delivery_fee_snapshot',
+  'platform_delivery_tariff_id',
+  'restaurant_delivery_tariff_id',
+  'payment_method',
+  'restaurant_confirmed_at',
+  'restaurant_rejected_at',
+  'restaurant_confirmation_method',
+  'cancellation_reason',
+  'created_at',
+  'updated_at',
+].join(', ');
+
+function parseSavedNumber(value: unknown): number | null {
+  if (value === undefined || value === null || value === '') return null;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function parseSavedString(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  const str = String(value).trim();
+  return str.length > 0 ? str : null;
+}
+
 /**
  * دمج وتحويل سجلات قاعدة البيانات إلى نموذج الطلب المعتمد في التطبيق
+ * يقرأ اللقطات المالية المحفوظة كما هي في قاعدة البيانات دون أي إعادة حساب محلي
  */
 export function mapDbOrderToAppOrder(
   dbOrder: DbRestaurantOrder,
@@ -167,36 +225,70 @@ export function mapDbOrderToAppOrder(
   driverProfile?: { full_name?: string | null; phone?: string | null } | null,
   optionsMap: Record<string, DbRestaurantOrderItemOption[]> = {}
 ): Order {
-  const foodSubtotal = Number(dbOrder.food_subtotal) || 0;
-  const discountTotal = Number(dbOrder.discount_amount) || 0;
-  const foodTotal = Math.max(0, foodSubtotal - discountTotal);
-  const deliveryFee = Number(dbOrder.delivery_fee) || 0;
-  const grandTotal = Number(dbOrder.customer_total) || foodTotal + deliveryFee;
+  const missingSnapshotFields: string[] = [];
+  const rawRecord = dbOrder as unknown as Record<string, unknown>;
 
-  // لا نضع أي نسبة عمولة افتراضية من عندنا — نعتمد حصرياً على البيانات الفعلية
-  const commissionRatePct =
-    dbOrder.commission_percent_snapshot !== undefined && dbOrder.commission_percent_snapshot !== null
-      ? Number(dbOrder.commission_percent_snapshot)
+  const trackMissingIfNullOrAbsent = (field: string, parsedValue: number | string | null) => {
+    if (!Object.prototype.hasOwnProperty.call(rawRecord, field) || rawRecord[field] === undefined || parsedValue === null) {
+      missingSnapshotFields.push(field);
+    }
+  };
+
+  const foodSubtotal = parseSavedNumber(dbOrder.food_subtotal);
+  const discountTotal = parseSavedNumber(dbOrder.discount_amount);
+  trackMissingIfNullOrAbsent('food_subtotal', foodSubtotal);
+  trackMissingIfNullOrAbsent('discount_amount', discountTotal);
+
+  const foodTotal =
+    foodSubtotal !== null && discountTotal !== null
+      ? Math.max(0, foodSubtotal - discountTotal)
       : null;
-  const adminCommissionRate = commissionRatePct !== null ? commissionRatePct / 100 : 0;
-  const adminFeeShare =
-    dbOrder.admin_fee_share !== undefined && dbOrder.admin_fee_share !== null
-      ? Number(dbOrder.admin_fee_share)
-      : (commissionRatePct !== null ? Number((foodTotal * adminCommissionRate).toFixed(2)) : 0);
 
-  const restaurantFeeShare =
-    dbOrder.restaurant_fee_share !== undefined && dbOrder.restaurant_fee_share !== null
-      ? Number(dbOrder.restaurant_fee_share)
-      : dbOrder.fulfillment_route === 'restaurant_delivery'
-      ? foodTotal - adminFeeShare + deliveryFee
-      : foodTotal - adminFeeShare;
+  const customerDeliveryFeeSnapshot = parseSavedNumber(dbOrder.customer_delivery_fee_snapshot);
+  const deliveryBaseFeeSnapshot = parseSavedNumber(dbOrder.delivery_base_fee_snapshot);
+  const deliveryAdminCommissionSnapshot = parseSavedNumber(dbOrder.delivery_admin_commission_snapshot);
+  const deliveryDriverNetSnapshot = parseSavedNumber(dbOrder.delivery_driver_net_snapshot);
+  const platformDeliveryTariffId = parseSavedString(dbOrder.platform_delivery_tariff_id);
+  const restaurantDeliveryTariffId = parseSavedString(dbOrder.restaurant_delivery_tariff_id);
 
-  const driverFeeShare =
-    dbOrder.driver_fee_share !== undefined && dbOrder.driver_fee_share !== null
-      ? Number(dbOrder.driver_fee_share)
-      : dbOrder.fulfillment_route === 'driver_delivery'
-      ? deliveryFee
-      : 0;
+  trackMissingIfNullOrAbsent('customer_delivery_fee_snapshot', customerDeliveryFeeSnapshot);
+  trackMissingIfNullOrAbsent('delivery_base_fee_snapshot', deliveryBaseFeeSnapshot);
+  trackMissingIfNullOrAbsent('delivery_admin_commission_snapshot', deliveryAdminCommissionSnapshot);
+  trackMissingIfNullOrAbsent('delivery_driver_net_snapshot', deliveryDriverNetSnapshot);
+
+  if (!Object.prototype.hasOwnProperty.call(rawRecord, 'platform_delivery_tariff_id') || rawRecord.platform_delivery_tariff_id === undefined) {
+    missingSnapshotFields.push('platform_delivery_tariff_id');
+  }
+  if (!Object.prototype.hasOwnProperty.call(rawRecord, 'restaurant_delivery_tariff_id') || rawRecord.restaurant_delivery_tariff_id === undefined) {
+    missingSnapshotFields.push('restaurant_delivery_tariff_id');
+  }
+  if (
+    platformDeliveryTariffId === null &&
+    restaurantDeliveryTariffId === null &&
+    !missingSnapshotFields.includes('platform_delivery_tariff_id') &&
+    !missingSnapshotFields.includes('restaurant_delivery_tariff_id')
+  ) {
+    missingSnapshotFields.push('platform_delivery_tariff_id / restaurant_delivery_tariff_id');
+  }
+
+  const savedDeliveryFee = parseSavedNumber(dbOrder.delivery_fee);
+  // رسوم توصيل العميل المحفوظة تأتي من customer_delivery_fee_snapshot أولاً ثم delivery_fee فقط دون استبدالها بـ delivery_base_fee_snapshot
+  const deliveryFee = customerDeliveryFeeSnapshot ?? savedDeliveryFee;
+
+  const grandTotal = parseSavedNumber(dbOrder.customer_total);
+  trackMissingIfNullOrAbsent('customer_total', grandTotal);
+
+  const commissionRatePct = parseSavedNumber(dbOrder.commission_percent_snapshot);
+  trackMissingIfNullOrAbsent('commission_percent_snapshot', commissionRatePct);
+  const adminCommissionRate = commissionRatePct !== null ? commissionRatePct / 100 : null;
+
+  const adminFeeShare = parseSavedNumber(dbOrder.admin_fee_share);
+  const restaurantFeeShare = parseSavedNumber(dbOrder.restaurant_fee_share);
+  const driverFeeShare = parseSavedNumber(dbOrder.driver_fee_share);
+
+  trackMissingIfNullOrAbsent('admin_fee_share', adminFeeShare);
+  trackMissingIfNullOrAbsent('restaurant_fee_share', restaurantFeeShare);
+  trackMissingIfNullOrAbsent('driver_fee_share', driverFeeShare);
 
   // تحويل الأصناف مع ربط الخيارات الفعلية من جدول restaurant_order_item_options
   const items: OrderItem[] = orderItems.map((item) => {
@@ -291,32 +383,6 @@ export function mapDbOrderToAppOrder(
   const area =
     dbOrder.delivery_area_name_snapshot || '';
 
-  const deliveryTariffId =
-    dbOrder.delivery_tariff_id ||
-    dbOrder.area_tariff_id ||
-    dbOrder.tariff_id ||
-    null;
-
-  const savedJsonSnapshot =
-    dbOrder.delivery_pricing_snapshot ||
-    dbOrder.pricing_snapshot ||
-    dbOrder.delivery_tariff_snapshot ||
-    dbOrder.tariff_snapshot ||
-    null;
-
-  const deliveryPricingSnapshot: Record<string, any> = {
-    ...(savedJsonSnapshot && typeof savedJsonSnapshot === 'object' ? savedJsonSnapshot : {}),
-    fulfillment_route: dbOrder.fulfillment_route,
-    delivery_fee: deliveryFee,
-    commission_percent_snapshot: commissionRatePct,
-    driver_fee_share: driverFeeShare,
-    admin_fee_share: adminFeeShare,
-    restaurant_fee_share: restaurantFeeShare,
-    delivery_governorate_id: dbOrder.delivery_governorate_id || null,
-    delivery_center_id: dbOrder.delivery_center_id || null,
-    delivery_area_id: dbOrder.delivery_area_id || null,
-  };
-
   return {
     id: dbOrder.id,
     orderNumber: String(dbOrder.order_number),
@@ -331,8 +397,8 @@ export function mapDbOrderToAppOrder(
       area,
     },
     items,
-    subtotal: foodSubtotal,
-    discountTotal,
+    subtotal: foodSubtotal ?? 0,
+    discountTotal: discountTotal ?? 0,
     foodTotal,
     deliveryFee,
     grandTotal,
@@ -344,17 +410,23 @@ export function mapDbOrderToAppOrder(
     rejectionReason: dbOrder.cancellation_reason || undefined,
     statusHistory: history,
     adminCommissionRate,
+    commissionPercentSnapshot: commissionRatePct,
     adminCommissionAmount: adminFeeShare,
     netRestaurantDue: restaurantFeeShare,
     settlementStatus: 'PENDING',
     adminFeeShare,
     restaurantFeeShare,
     driverFeeShare,
+    customerDeliveryFeeSnapshot,
+    deliveryBaseFeeSnapshot,
+    deliveryAdminCommissionSnapshot,
+    deliveryDriverNetSnapshot,
+    platformDeliveryTariffId,
+    restaurantDeliveryTariffId,
+    missingSnapshotFields,
     deliveryGovernorateSnapshot: dbOrder.delivery_governorate_name_snapshot || undefined,
     deliveryCenterSnapshot: dbOrder.delivery_center_name_snapshot || undefined,
     deliveryAreaSnapshot: dbOrder.delivery_area_name_snapshot || undefined,
-    deliveryTariffId,
-    deliveryPricingSnapshot,
     driverInfo,
     deliveryOrder: deliveryOrder || undefined,
   };
@@ -383,10 +455,10 @@ export async function fetchRestaurantOrders(
   }
 
   try {
-    // 1. جلب سجلات الطلبات للمطعم الحالي فقط
+    // 1. جلب سجلات الطلبات للمطعم الحالي فقط مع جميع حقول اللقطة المالية المحفوظة
     const { data: ordersData, error: ordersError } = await supabase
       .from('restaurant_orders')
-      .select('*')
+      .select(RESTAURANT_ORDER_SELECT_COLUMNS)
       .eq('restaurant_id', restaurantId)
       .order('created_at', { ascending: false });
 
@@ -405,7 +477,7 @@ export async function fetchRestaurantOrders(
       };
     }
 
-    const orderRows = ordersData as DbRestaurantOrder[];
+    const orderRows = ordersData as unknown as DbRestaurantOrder[];
     const orderIds = orderRows.map((o) => o.id);
 
     // 2. جلب تفاصيل الأصناف المرتبطة بهذه الطلبات
@@ -561,7 +633,7 @@ export async function fetchOrderDetails(
   try {
     const { data: orderData, error: orderError } = await supabase
       .from('restaurant_orders')
-      .select('*')
+      .select(RESTAURANT_ORDER_SELECT_COLUMNS)
       .eq('id', orderId)
       .maybeSingle();
 
@@ -640,7 +712,7 @@ export async function fetchOrderDetails(
     }
 
     const order = mapDbOrderToAppOrder(
-      orderData as DbRestaurantOrder,
+      orderData as unknown as DbRestaurantOrder,
       orderItemRows,
       (histRes.data as DbRestaurantOrderStatusHistory[]) || [],
       delivOrder,

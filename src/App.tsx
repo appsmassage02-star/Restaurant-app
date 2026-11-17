@@ -282,7 +282,7 @@ const MainAppContent: React.FC = () => {
                 وصول طلب جديد! #{newOrderAlert.orderNumber}
               </h4>
               <p className="text-xs font-semibold mt-0.5 text-slate-900">
-                قيمة الطلب: {newOrderAlert.grandTotal} ج.م ({newOrderAlert.route === 'SELF_DELIVERY' ? 'توصيل ذاتي للمطعم' : 'اتصال وتوصيل مندوب'})
+                قيمة الطلب: {newOrderAlert.grandTotal !== null ? `${newOrderAlert.grandTotal} ج.م` : 'غير محدد'} ({newOrderAlert.route === 'SELF_DELIVERY' ? 'توصيل ذاتي للمطعم' : 'اتصال وتوصيل مندوب'})
               </p>
               <button
                 onClick={() => {

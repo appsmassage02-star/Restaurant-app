@@ -146,9 +146,9 @@ export interface Order {
   items: OrderItem[];
   subtotal: number; // before discount
   discountTotal: number; // discount borne by restaurant
-  foodTotal: number; // after discount
-  deliveryFee: number;
-  grandTotal: number;
+  foodTotal: number | null; // after discount
+  deliveryFee: number | null;
+  grandTotal: number | null;
   paymentMethod: 'CASH_ON_DELIVERY' | string;
   route: ExecutionRoute;
   rawRoute?: string;
@@ -156,18 +156,24 @@ export interface Order {
   rawStatus?: string;
   rejectionReason?: string;
   statusHistory: OrderStatusHistory[];
-  adminCommissionRate: number; // e.g. 0.10 for 10%
-  adminCommissionAmount: number; // calculated solely on foodTotal
-  netRestaurantDue: number; // foodTotal - adminCommissionAmount + (route === 'SELF_DELIVERY' ? deliveryFee : 0)
+  adminCommissionRate: number | null; // e.g. 0.10 for 10%
+  commissionPercentSnapshot?: number | null;
+  adminCommissionAmount: number | null;
+  netRestaurantDue: number | null;
   settlementStatus: SettlementStatus;
-  adminFeeShare?: number;
-  restaurantFeeShare?: number;
-  driverFeeShare?: number;
+  adminFeeShare?: number | null;
+  restaurantFeeShare?: number | null;
+  driverFeeShare?: number | null;
+  customerDeliveryFeeSnapshot?: number | null;
+  deliveryBaseFeeSnapshot?: number | null;
+  deliveryAdminCommissionSnapshot?: number | null;
+  deliveryDriverNetSnapshot?: number | null;
+  platformDeliveryTariffId?: string | null;
+  restaurantDeliveryTariffId?: string | null;
+  missingSnapshotFields?: string[];
   deliveryGovernorateSnapshot?: string;
   deliveryCenterSnapshot?: string;
   deliveryAreaSnapshot?: string;
-  deliveryTariffId?: string | null;
-  deliveryPricingSnapshot?: Record<string, any> | null;
   workflowItems?: DbOrderWorkflowItem[];
   pendingCancellation?: DbPendingCancellation | null;
   driverInfo?: DriverInfo;

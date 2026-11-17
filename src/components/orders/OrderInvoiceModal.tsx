@@ -132,15 +132,21 @@ export const OrderInvoiceModal: React.FC<OrderInvoiceModalProps> = ({ order, onC
             )}
             <div className="flex justify-between text-slate-800 font-bold">
               <span>صافي الطعام:</span>
-              <span>{order.foodTotal} ج.م</span>
+              <span>{order.foodTotal !== null ? `${order.foodTotal} ج.م` : 'غير متوفر'}</span>
             </div>
             <div className="flex justify-between text-slate-600">
               <span>خدمة التوصيل:</span>
-              <span>{order.deliveryFee} ج.م</span>
+              <span>
+                {order.customerDeliveryFeeSnapshot !== null && order.customerDeliveryFeeSnapshot !== undefined
+                  ? `${order.customerDeliveryFeeSnapshot} ج.م`
+                  : order.deliveryFee !== null
+                  ? `${order.deliveryFee} ج.م`
+                  : 'غير متوفر'}
+              </span>
             </div>
             <div className="flex justify-between text-base font-black text-slate-900 border-t-2 border-slate-900 pt-2">
               <span>المطلوب دفعه كاش:</span>
-              <span>{order.grandTotal} جنيه مصري</span>
+              <span>{order.grandTotal !== null ? `${order.grandTotal} جنيه مصري` : 'غير متوفر'}</span>
             </div>
           </div>
 

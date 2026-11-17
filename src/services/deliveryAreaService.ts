@@ -1,5 +1,5 @@
 import { supabase, isSupabaseConfigured } from './supabase';
-import { DbDeliveryAreaTariff } from '../types/database';
+import { DbDeliveryAreaTariff, DeliveryScopeLevel } from '../types/database';
 
 export interface ServiceResult<T> {
   data: T | null;
@@ -15,12 +15,16 @@ export interface CentralDeliveryTariffItem {
   governorate_id: string | null;
   center_id: string | null;
   area_id: string | null;
+  scope_level: DeliveryScopeLevel | string | null;
+  resolved_scope_level: DeliveryScopeLevel;
   governorate_name: string;
   center_name: string;
   area_name: string;
-  delivery_fee: number | null;
-  min_order_amount: number | null;
-  is_active: boolean;
+  base_delivery_fee: number | null;
+  admin_commission: number | null;
+  driver_net_fee: number | null;
+  customer_delivery_fee: number | null;
+  is_enabled: boolean;
   notes: string | null;
   created_at?: string;
   updated_at?: string;
@@ -29,33 +33,119 @@ export interface CentralDeliveryTariffItem {
 
 export interface RestaurantSectionSettings {
   id: string;
-  section_enabled: boolean;
-  no_driver_timeout_minutes: number;
+  section_enabled: boolean | null;
   created_at?: string;
   updated_at?: string;
 }
 
-function extractNumericField(row: Record<string, any>, candidateKeys: string[]): number | null {
-  for (const key of candidateKeys) {
-    const val = row[key];
-    if (val !== undefined && val !== null && val !== '') {
-      const num = Number(val);
-      if (!isNaN(num)) return num;
-    }
-  }
-  return null;
+const TARIFF_SELECT_COLUMNS = [
+  'id',
+  'service_type',
+  'delivery_owner',
+  'restaurant_id',
+  'governorate_id',
+  'center_id',
+  'area_id',
+  'scope_level',
+  'base_delivery_fee',
+  'admin_commission',
+  'driver_net_fee',
+  'customer_delivery_fee',
+  'is_enabled',
+  'notes',
+  'created_at',
+  'updated_at',
+].join(', ');
+
+const SCOPE_PRIORITY_ORDER: Record<DeliveryScopeLevel, number> = {
+  area: 1,
+  center: 2,
+  governorate: 3,
+};
+
+function parseNullableNumber(value: unknown): number | null {
+  if (value === undefined || value === null || value === '') return null;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
 }
 
-function extractTariffActive(row: Record<string, any>): boolean {
-  if (typeof row.is_active === 'boolean') return row.is_active;
-  if (typeof row.active === 'boolean') return row.active;
-  if (typeof row.is_enabled === 'boolean') return row.is_enabled;
-  if (typeof row.enabled === 'boolean') return row.enabled;
-  if (typeof row.status === 'string') {
-    const s = row.status.toLowerCase().trim();
-    return s === 'active' || s === 'enabled';
+/**
+ * تحديد مستوى الأولوية الجغرافية للتسعيرة وفق الترتيب المعتمد:
+ * المنطقة (area) <- المركز (center) <- المحافظة (governorate)
+ */
+export function resolveTariffScopeLevel(tariff: {
+  scope_level?: string | null;
+  area_id?: string | null;
+  center_id?: string | null;
+  governorate_id?: string | null;
+}): DeliveryScopeLevel {
+  const rawScope = (tariff.scope_level || '').toLowerCase().trim();
+  if (rawScope === 'area' || rawScope === 'center' || rawScope === 'governorate') {
+    return rawScope;
   }
-  return true;
+  if (tariff.area_id) return 'area';
+  if (tariff.center_id) return 'center';
+  return 'governorate';
+}
+
+/**
+ * ترتيب تسعيرات التوصيل حسب التفعيل ثم الأولوية الجغرافية (المنطقة <- المركز <- المحافظة)
+ */
+export function sortCentralTariffsByPriority(
+  items: CentralDeliveryTariffItem[]
+): CentralDeliveryTariffItem[] {
+  return [...items].sort((a, b) => {
+    if (a.is_enabled !== b.is_enabled) {
+      return a.is_enabled ? -1 : 1;
+    }
+    const prioA = SCOPE_PRIORITY_ORDER[a.resolved_scope_level] ?? 99;
+    const prioB = SCOPE_PRIORITY_ORDER[b.resolved_scope_level] ?? 99;
+    if (prioA !== prioB) {
+      return prioA - prioB;
+    }
+    const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+    const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+    return timeB - timeA;
+  });
+}
+
+/**
+ * اختيار التسعيرة المركزية الفعّالة لنقطة جغرافية محددة حسب الأولوية:
+ * المنطقة (area) <- المركز (center) <- المحافظة (governorate)
+ * مع احترام حالة التفعيل is_enabled === true فقط
+ */
+export function resolveApplicableCentralTariff(
+  items: CentralDeliveryTariffItem[],
+  location: {
+    governorateId?: string | null;
+    centerId?: string | null;
+    areaId?: string | null;
+  }
+): CentralDeliveryTariffItem | null {
+  const enabledItems = items.filter((t) => t.is_enabled === true);
+
+  if (location.areaId) {
+    const areaMatch = enabledItems.find(
+      (t) => t.resolved_scope_level === 'area' && t.area_id === location.areaId
+    );
+    if (areaMatch) return areaMatch;
+  }
+
+  if (location.centerId) {
+    const centerMatch = enabledItems.find(
+      (t) => t.resolved_scope_level === 'center' && t.center_id === location.centerId
+    );
+    if (centerMatch) return centerMatch;
+  }
+
+  if (location.governorateId) {
+    const govMatch = enabledItems.find(
+      (t) => t.resolved_scope_level === 'governorate' && t.governorate_id === location.governorateId
+    );
+    if (govMatch) return govMatch;
+  }
+
+  return null;
 }
 
 /**
@@ -65,27 +155,42 @@ function extractTariffActive(row: Record<string, any>): boolean {
  * - delivery_owner = 'restaurant'
  * - restaurant_id = معرف المطعم الحالي
  * مع إثراء الأسماء الجغرافية مباشرة من جداول geo_governorates / geo_centers / geo_areas
+ * دون استخدام أسماء أعمدة تخمينية أو استبدال customer_delivery_fee بـ base_delivery_fee
  */
 export async function fetchRestaurantCentralTariffs(
-  restaurantId: string
+  restaurantId: string,
+  options?: { onlyEnabled?: boolean }
 ): Promise<ServiceResult<CentralDeliveryTariffItem[]>> {
-  if (!isSupabaseConfigured || !restaurantId) {
+  if (!isSupabaseConfigured) {
+    return {
+      data: null,
+      error: 'إعدادات الاتصال بـ Supabase غير مهيأة لقراءة التسعير المركزي.',
+    };
+  }
+
+  if (!restaurantId) {
     return { data: [], error: null };
   }
 
   try {
-    const { data: tariffRows, error } = await supabase
+    let query = supabase
       .from('delivery_area_tariffs')
-      .select('*')
+      .select(TARIFF_SELECT_COLUMNS)
       .eq('service_type', 'ready_food')
       .eq('delivery_owner', 'restaurant')
-      .eq('restaurant_id', restaurantId)
-      .order('created_at', { ascending: false });
+      .eq('restaurant_id', restaurantId);
+
+    if (options?.onlyEnabled) {
+      query = query.eq('is_enabled', true);
+    }
+
+    const { data: tariffRows, error } = await query.order('created_at', { ascending: false });
 
     if (error) {
       const msgLower = (error.message || '').toLowerCase();
       const isPerm =
         error.code === '42501' ||
+        error.code === 'PGRST301' ||
         msgLower.includes('permission denied') ||
         msgLower.includes('row-level security');
 
@@ -94,12 +199,12 @@ export async function fetchRestaurantCentralTariffs(
         data: null,
         isPermissionError: isPerm,
         error: isPerm
-          ? 'صلاحيات قاعدة البيانات (RLS) تمنع قراءة جدول التسعير المركزي delivery_area_tariffs حاليًا للمطعم.'
+          ? 'صلاحيات قاعدة البيانات (RLS) تمنع قراءة جدول التسعير المركزي delivery_area_tariffs حاليًا للمطعم (يلزم وجود سياسة SELECT مقيّدة لصاحب المطعم).'
           : `تعذر جلب تسعير التوصيل المركزي: ${error.message}`,
       };
     }
 
-    const rows = (tariffRows || []) as DbDeliveryAreaTariff[];
+    const rows = (tariffRows || []) as unknown as DbDeliveryAreaTariff[];
     if (rows.length === 0) {
       return { data: [], error: null };
     }
@@ -139,28 +244,8 @@ export async function fetchRestaurantCentralTariffs(
     }
 
     const items: CentralDeliveryTariffItem[] = rows.map((row) => {
-      const fee = extractNumericField(row, [
-        'delivery_fee',
-        'fee_amount',
-        'tariff_amount',
-        'amount',
-        'customer_delivery_fee',
-        'customer_fee',
-        'base_delivery_fee',
-        'base_fee',
-        'fixed_fee',
-        'price',
-        'price_amount',
-        'rate',
-        'fee',
-      ]);
-
-      const minOrder = extractNumericField(row, [
-        'min_order_amount',
-        'minimum_order_amount',
-        'minimum_order',
-        'min_order',
-      ]);
+      const resolvedScope = resolveTariffScopeLevel(row);
+      const isEnabled = row.is_enabled === true;
 
       return {
         id: row.id,
@@ -170,6 +255,8 @@ export async function fetchRestaurantCentralTariffs(
         governorate_id: row.governorate_id ?? null,
         center_id: row.center_id ?? null,
         area_id: row.area_id ?? null,
+        scope_level: row.scope_level ?? null,
+        resolved_scope_level: resolvedScope,
         governorate_name: row.governorate_id
           ? govMap[row.governorate_id] || 'محافظة غير محددة'
           : 'كل المحافظات',
@@ -179,9 +266,11 @@ export async function fetchRestaurantCentralTariffs(
         area_name: row.area_id
           ? areaMap[row.area_id] || 'حي/منطقة'
           : 'المركز بالكامل',
-        delivery_fee: fee,
-        min_order_amount: minOrder,
-        is_active: extractTariffActive(row),
+        base_delivery_fee: parseNullableNumber(row.base_delivery_fee),
+        admin_commission: parseNullableNumber(row.admin_commission),
+        driver_net_fee: parseNullableNumber(row.driver_net_fee),
+        customer_delivery_fee: parseNullableNumber(row.customer_delivery_fee),
+        is_enabled: isEnabled,
         notes: row.notes || null,
         created_at: row.created_at,
         updated_at: row.updated_at,
@@ -189,7 +278,9 @@ export async function fetchRestaurantCentralTariffs(
       };
     });
 
-    return { data: items, error: null };
+    const filteredItems = options?.onlyEnabled ? items.filter((item) => item.is_enabled) : items;
+
+    return { data: sortCentralTariffsByPriority(filteredItems), error: null };
   } catch (err: any) {
     return {
       data: null,
@@ -200,58 +291,61 @@ export async function fetchRestaurantCentralTariffs(
 
 /**
  * جلب الإعدادات الإدارية المركزية العامة من جدول restaurant_section_settings (للقراءة فقط)
+ * بدون أي اعتماد على no_driver_timeout_minutes أو إرجاع قيم افتراضية عند غياب الإعداد أو فشل القراءة
  */
 export async function fetchSectionSettings(): Promise<ServiceResult<RestaurantSectionSettings>> {
   if (!isSupabaseConfigured) {
     return {
-      data: {
-        id: 'default',
-        section_enabled: true,
-        no_driver_timeout_minutes: 10,
-      },
-      error: null,
+      data: null,
+      error: 'إعدادات الاتصال بـ Supabase غير مهيأة لقراءة إعدادات القسم المركزية.',
     };
   }
 
   try {
     const { data, error } = await supabase
       .from('restaurant_section_settings')
-      .select('id, section_enabled, no_driver_timeout_minutes, created_at, updated_at')
+      .select('id, section_enabled, created_at, updated_at')
       .limit(1)
       .maybeSingle();
 
-    if (error || !data) {
-      if (error) {
-        console.warn('Could not fetch restaurant_section_settings:', error.message);
-      }
+    if (error) {
+      const msgLower = (error.message || '').toLowerCase();
+      const isPerm =
+        error.code === '42501' ||
+        error.code === 'PGRST301' ||
+        msgLower.includes('permission denied') ||
+        msgLower.includes('row-level security');
+
+      console.warn('Could not fetch restaurant_section_settings:', error.message);
       return {
-        data: {
-          id: 'default',
-          section_enabled: true,
-          no_driver_timeout_minutes: 10,
-        },
-        error: null,
+        data: null,
+        isPermissionError: isPerm,
+        error: isPerm
+          ? 'صلاحيات قاعدة البيانات (RLS) تمنع قراءة إعدادات قسم المطاعم المركزية restaurant_section_settings.'
+          : `تعذر جلب إعدادات القسم المركزية: ${error.message}`,
+      };
+    }
+
+    if (!data) {
+      return {
+        data: null,
+        error: 'لا توجد إعدادات مركزية مسجلة في جدول restaurant_section_settings.',
       };
     }
 
     return {
       data: {
         id: data.id,
-        section_enabled: data.section_enabled !== false,
-        no_driver_timeout_minutes: Number(data.no_driver_timeout_minutes ?? 10),
+        section_enabled: typeof data.section_enabled === 'boolean' ? data.section_enabled : null,
         created_at: data.created_at,
         updated_at: data.updated_at,
       },
       error: null,
     };
-  } catch {
+  } catch (err: any) {
     return {
-      data: {
-        id: 'default',
-        section_enabled: true,
-        no_driver_timeout_minutes: 10,
-      },
-      error: null,
+      data: null,
+      error: err?.message || 'فشل الاتصال بقاعدة البيانات لجلب إعدادات القسم المركزية.',
     };
   }
 }
