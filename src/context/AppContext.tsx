@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useRef, useMemo } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured, getSupabaseConfig } from '../services/supabase';
 import {
@@ -13,10 +13,13 @@ import {
   OrderStatus,
   RegistrationStatus,
   ExecutionRoute,
+  AppSectionSettings,
+  OperationalStatusEvaluation,
 } from '../types';
 import {
   DbProfile,
   DbRestaurant,
+  DbAppSectionSettings,
   CreateRestaurantPayload,
 } from '../types/database';
 import {
@@ -45,6 +48,10 @@ import {
 } from '../services/offerService';
 import {
   updateRestaurantDbSettings,
+  fetchReadyFoodSectionSettings,
+  mapDbAppSectionSettings,
+  evaluateReadyFoodOperationalState,
+  READY_FOOD_SECTION_KEY,
 } from '../services/deliveryAreaService';
 import {
   orderRealtimeManager,
@@ -122,6 +129,13 @@ interface AppContextType {
   owner: RestaurantOwner;
   restaurant: RestaurantProfile;
   dbRestaurant: DbRestaurant | null;
+
+  // Central Platform Section Settings (Level 1 - Read Only: ready_food) & Two-Level Operational Status
+  sectionSettings: AppSectionSettings | null;
+  sectionSettingsLoading: boolean;
+  sectionSettingsError: string | null;
+  refreshSectionSettings: () => Promise<void>;
+  operationalStatus: OperationalStatusEvaluation;
 
   // Auth Actions
   login: (email: string, pass: string) => Promise<AuthResult>;
@@ -260,11 +274,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const loadSequenceRef = useRef<number>(0);
   const menuSequenceRef = useRef<number>(0);
   const offersSequenceRef = useRef<number>(0);
+  const sectionSettingsSeqRef = useRef<number>(0);
 
   // Real owned restaurant state
   const [dbRestaurant, setDbRestaurant] = useState<DbRestaurant | null>(null);
   const [restaurant, setRestaurant] = useState<RestaurantProfile>(EMPTY_RESTAURANT);
   const [owner, setOwner] = useState<RestaurantOwner>(EMPTY_OWNER);
+
+  // Central Ready Food Section Settings (public.app_section_settings where section_key = 'ready_food')
+  const [sectionSettings, setSectionSettings] = useState<AppSectionSettings | null>(null);
+  const [sectionSettingsLoading, setSectionSettingsLoading] = useState<boolean>(false);
+  const [sectionSettingsError, setSectionSettingsError] = useState<string | null>(null);
 
   // Operational states: Start empty (no fake mock data presented as real database records)
   const [categories, setCategories] = useState<MenuCategory[]>([]);
@@ -291,6 +311,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // تصفير شامل لجميع بيانات وحالات المستخدم والمطعم السابق فورًا لمنع أي تسرب للبيانات
   const resetUserDataState = useCallback(() => {
     orderRealtimeManager.stop();
+    sectionSettingsSeqRef.current++;
     setUserProfile(null);
     setIsUserBanned(false);
     setIsUserSuspended(false);
@@ -298,6 +319,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setOwner(EMPTY_OWNER);
     setDbRestaurant(null);
     setRestaurant(EMPTY_RESTAURANT);
+    setSectionSettings(null);
+    setSectionSettingsLoading(false);
+    setSectionSettingsError(null);
     setCategories([]);
     setMenuItems([]);
     setMenuLoading(false);
@@ -316,6 +340,45 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setDataLoadError(null);
     activeRestaurantIdRef.current = null;
   }, []);
+
+  const refreshSectionSettings = useCallback(async () => {
+    const reqSeq = ++sectionSettingsSeqRef.current;
+    setSectionSettingsLoading(true);
+    try {
+      const res = await fetchReadyFoodSectionSettings();
+      if (reqSeq !== sectionSettingsSeqRef.current) return;
+      if (res.error) {
+        setSectionSettings(null);
+        setSectionSettingsError(res.error);
+      } else {
+        setSectionSettings(res.data);
+        setSectionSettingsError(null);
+      }
+    } catch (err: any) {
+      if (reqSeq !== sectionSettingsSeqRef.current) return;
+      setSectionSettings(null);
+      setSectionSettingsError(err?.message || 'تعذر جلب إعدادات القسم المركزية.');
+    } finally {
+      if (reqSeq === sectionSettingsSeqRef.current) {
+        setSectionSettingsLoading(false);
+      }
+    }
+  }, []);
+
+  const operationalStatus = useMemo(
+    () =>
+      evaluateReadyFoodOperationalState(sectionSettings, {
+        isApproved: restaurant.registrationStatus === 'APPROVED',
+        isOpen: restaurant.isOpen,
+        restaurantDeliveryEnabled: restaurant.restaurantDeliveryEnabled,
+      }),
+    [
+      sectionSettings,
+      restaurant.registrationStatus,
+      restaurant.isOpen,
+      restaurant.restaurantDeliveryEnabled,
+    ]
+  );
 
   // Load Menu Data from Supabase with full protection against stale responses
   const loadMenuData = useCallback(
@@ -423,6 +486,74 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       await loadOffersData(dbRestaurant.id, loadSequenceRef.current);
     }
   }, [dbRestaurant?.id, loadOffersData]);
+
+  // الاستماع الفوري والمزامنة الدورية لإعدادات قسم الأكلات الجاهزة المركزية (public.app_section_settings)
+  useEffect(() => {
+    if (!isAuthenticated || !isSupabaseConfigured) {
+      return;
+    }
+
+    refreshSectionSettings();
+
+    const channel = supabase
+      .channel(`app_section_settings_${READY_FOOD_SECTION_KEY}_${Date.now()}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'app_section_settings',
+          filter: `section_key=eq.${READY_FOOD_SECTION_KEY}`,
+        },
+        (payload: any) => {
+          sectionSettingsSeqRef.current++;
+          if (payload.eventType === 'DELETE') {
+            setSectionSettings(null);
+            setSectionSettingsError(
+              "سجل إعدادات قسم الأكلات الجاهزة (section_key = 'ready_food') غير متوفر حاليًا."
+            );
+            return;
+          }
+          if (payload.new) {
+            setSectionSettings(mapDbAppSectionSettings(payload.new as DbAppSectionSettings));
+            setSectionSettingsError(null);
+          } else {
+            refreshSectionSettings();
+          }
+        }
+      )
+      .subscribe();
+
+    const handleWindowResync = () => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        refreshSectionSettings();
+      }
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', handleWindowResync);
+      window.addEventListener('online', handleWindowResync);
+      document.addEventListener('visibilitychange', handleWindowResync);
+    }
+
+    const fallbackInterval = setInterval(() => {
+      refreshSectionSettings();
+    }, 60000);
+
+    return () => {
+      try {
+        supabase.removeChannel(channel);
+      } catch {
+        // ignore
+      }
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('focus', handleWindowResync);
+        window.removeEventListener('online', handleWindowResync);
+        document.removeEventListener('visibilitychange', handleWindowResync);
+      }
+      clearInterval(fallbackInterval);
+    };
+  }, [isAuthenticated, refreshSectionSettings]);
 
   // الاستقبال اللحظي للطلبات والمزامنة التلقائية (المرحلة الأولى)
   useEffect(() => {
@@ -926,6 +1057,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const refreshRestaurant = async () => {
+    await refreshSectionSettings();
     if (user) {
       await coordinateLoadUserData(user);
     }
@@ -1369,6 +1501,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       console.warn('تم تعطيل توليد الطلبات التجريبية نظراً لارتباط الحساب بمطعم فعلي في قاعدة البيانات.');
       return;
     }
+    if (!operationalStatus.canReceiveNewOrders) {
+      console.warn('لا يمكن محاكاة طلب جديد أثناء توقف القسم أو التوصيل المركزي أو إغلاق المطعم.');
+      return;
+    }
     const randomSuffix = Math.floor(1000 + Math.random() * 9000);
     const orderNum = `TB-${randomSuffix}`;
     const sampleItem = menuItems.find((i) => i.isAvailable) || menuItems[0];
@@ -1515,6 +1651,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         owner,
         restaurant,
         dbRestaurant,
+        sectionSettings,
+        sectionSettingsLoading,
+        sectionSettingsError,
+        refreshSectionSettings,
+        operationalStatus,
         login,
         signUp,
         resetPassword,

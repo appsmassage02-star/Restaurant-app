@@ -40,6 +40,8 @@ export const Header: React.FC<HeaderProps> = ({
     hasRestaurant,
     ordersRealtimeStatus,
     refreshOrders,
+    operationalStatus,
+    sectionSettingsError,
   } = useApp();
 
   const [showProfileMenu, setShowProfileMenu] = useState(false);
@@ -110,8 +112,40 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         {/* Center / Actions */}
-        <div className="flex items-center gap-2 sm:gap-4">
-          {/* Status Quick Toggle */}
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* Level 1: Read-Only Central Platform Section & Delivery Status */}
+          <div
+            className="hidden xl:flex items-center gap-1.5 bg-slate-50 px-2.5 py-1.5 rounded-xl border border-slate-200 text-[11px]"
+            title={
+              sectionSettingsError ||
+              'إعدادات المنصة العامة لقسم الأكلات الجاهزة (للقراءة فقط — تُدار مركزيًا من لوحة الإدارة)'
+            }
+          >
+            <span
+              className={`px-2 py-0.5 rounded-md font-bold ${
+                operationalStatus.platformSectionEnabled === true
+                  ? 'bg-emerald-100 text-emerald-800'
+                  : operationalStatus.platformSectionEnabled === false
+                  ? 'bg-rose-100 text-rose-800'
+                  : 'bg-amber-100 text-amber-800'
+              }`}
+            >
+              {operationalStatus.platformSectionLabel}
+            </span>
+            <span
+              className={`px-2 py-0.5 rounded-md font-bold ${
+                operationalStatus.platformDeliveryEnabled === true
+                  ? 'bg-emerald-100 text-emerald-800'
+                  : operationalStatus.platformDeliveryEnabled === false
+                  ? 'bg-rose-100 text-rose-800'
+                  : 'bg-amber-100 text-amber-800'
+              }`}
+            >
+              {operationalStatus.platformDeliveryLabel}
+            </span>
+          </div>
+
+          {/* Level 2: Restaurant Individual Open/Close Quick Toggle */}
           <div className="flex items-center gap-2 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200">
             <span
               className={`w-2.5 h-2.5 rounded-full ${
@@ -119,7 +153,7 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             />
             <span className="text-xs font-semibold text-slate-700 hidden md:inline">
-              {restaurant.isOpen ? 'استقبال الطلبات مفتوح' : 'المطعم مغلق'}
+              {restaurant.isOpen ? 'المطعم مفتوح' : 'المطعم مغلق'}
             </span>
             <button
               onClick={toggleRestaurantOpen}
@@ -129,7 +163,7 @@ export const Header: React.FC<HeaderProps> = ({
                   ? 'bg-rose-100 text-rose-700 hover:bg-rose-200'
                   : 'bg-emerald-600 text-white hover:bg-emerald-700'
               }`}
-              title="تغيير حالة استقبال الطلبات وحفظها في قاعدة البيانات"
+              title="تغيير حالة استقبال الطلبات الخاصة بمطعمك الفردي وحفظها في قاعدة البيانات"
             >
               {isTogglingOpen ? (
                 <>
@@ -170,7 +204,13 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="relative">
               <button
                 onClick={() => setShowNewOrderMenu(!showNewOrderMenu)}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-amber-900 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-xl transition-all shadow-xs"
+                disabled={!operationalStatus.canReceiveNewOrders}
+                title={
+                  !operationalStatus.canReceiveNewOrders
+                    ? operationalStatus.intakeStatusTitle
+                    : 'محاكاة وصول طلب جديد'
+                }
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-amber-900 bg-amber-100 hover:bg-amber-200 disabled:opacity-50 disabled:cursor-not-allowed border border-amber-300 rounded-xl transition-all shadow-xs"
               >
                 <PlusCircle className="w-4 h-4 text-amber-700" />
                 <span className="hidden sm:inline">طلب تجريبي</span>

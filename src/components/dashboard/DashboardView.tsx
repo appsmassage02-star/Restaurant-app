@@ -12,6 +12,11 @@ import {
   Eye,
   ChevronLeft,
   Loader2,
+  ShieldCheck,
+  Lock,
+  RefreshCw,
+  Store,
+  AlertCircle,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { StatCards } from './StatCards';
@@ -28,7 +33,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onNavigate,
   onOpenOrderDetails,
 }) => {
-  const { restaurant, orders, stats, updateRestaurantSettingsDb } = useApp();
+  const {
+    restaurant,
+    orders,
+    stats,
+    updateRestaurantSettingsDb,
+    sectionSettingsLoading,
+    sectionSettingsError,
+    refreshSectionSettings,
+    operationalStatus,
+  } = useApp();
   const [isOpeningRestaurant, setIsOpeningRestaurant] = useState(false);
   const [openError, setOpenError] = useState<string | null>(null);
 
@@ -117,6 +131,182 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Two-Level Operational Status Panel (Platform ready_food vs Individual Restaurant) */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 sm:p-5 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-5 h-5 text-amber-600 shrink-0" />
+            <div>
+              <h3 className="text-sm font-black text-slate-900">
+                حالة التشغيل: إعدادات المنصة العامة وحالة مطعمك الفردي
+              </h3>
+              <p className="text-[11px] text-slate-500">
+                فصل كامل بين قرار الإدارة المركزية لقسم الأكلات الجاهزة (للقراءة فقط) وإعدادات مطعمك الفردية
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => refreshSectionSettings()}
+            disabled={sectionSettingsLoading}
+            className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[11px] rounded-xl flex items-center gap-1.5 cursor-pointer disabled:opacity-50 w-fit"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${sectionSettingsLoading ? 'animate-spin text-amber-600' : ''}`} />
+            <span>تحديث حالة القسم</span>
+          </button>
+        </div>
+
+        {sectionSettingsError && (
+          <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold">تنبيه قراءة إعدادات المنصة المركزية (ready_food):</p>
+              <p className="text-[11px] text-amber-800 mt-0.5">{sectionSettingsError}</p>
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5 text-xs">
+          {/* Level 1: Platform Settings (Read-only) */}
+          <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="font-black text-slate-800 flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5 text-amber-600" />
+                المستوى الأول: المنصة العامة (قسم الأكلات الجاهزة)
+              </span>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-white border border-slate-200 text-slate-600">
+                للقراءة فقط
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div className="p-2.5 bg-white rounded-lg border border-slate-200">
+                <span className="text-[10px] text-slate-400 block">حالة القسم:</span>
+                <span
+                  className={`font-extrabold text-xs ${
+                    operationalStatus.platformSectionEnabled === true
+                      ? 'text-emerald-700'
+                      : operationalStatus.platformSectionEnabled === false
+                      ? 'text-rose-700'
+                      : 'text-amber-700'
+                  }`}
+                >
+                  {operationalStatus.platformSectionLabel}
+                </span>
+              </div>
+
+              <div className="p-2.5 bg-white rounded-lg border border-slate-200">
+                <span className="text-[10px] text-slate-400 block">خدمة التوصيل:</span>
+                <span
+                  className={`font-extrabold text-xs ${
+                    operationalStatus.platformDeliveryEnabled === true
+                      ? 'text-emerald-700'
+                      : operationalStatus.platformDeliveryEnabled === false
+                      ? 'text-rose-700'
+                      : 'text-amber-700'
+                  }`}
+                >
+                  {operationalStatus.platformDeliveryLabel}
+                </span>
+              </div>
+
+              <div className="p-2.5 bg-white rounded-lg border border-slate-200">
+                <span className="text-[10px] text-slate-400 block">ظهور القسم:</span>
+                <span
+                  className={`font-extrabold text-xs ${
+                    operationalStatus.platformSectionVisible === true
+                      ? 'text-emerald-700'
+                      : 'text-slate-600'
+                  }`}
+                >
+                  {operationalStatus.platformVisibilityLabel}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Level 2: Individual Restaurant Settings */}
+          <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="font-black text-slate-800 flex items-center gap-1.5">
+                <Store className="w-3.5 h-3.5 text-amber-600" />
+                المستوى الثاني: حالة مطعمك الفردي
+              </span>
+              <button
+                type="button"
+                onClick={() => onNavigate('settings')}
+                className="text-[10px] font-bold px-2 py-0.5 rounded bg-white hover:bg-amber-50 border border-slate-200 text-amber-700 cursor-pointer"
+              >
+                إدارة من الإعدادات
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div className="p-2.5 bg-white rounded-lg border border-slate-200">
+                <span className="text-[10px] text-slate-400 block">الاعتماد الإداري:</span>
+                <span
+                  className={`font-extrabold text-xs ${
+                    operationalStatus.restaurantApproved ? 'text-emerald-700' : 'text-rose-700'
+                  }`}
+                >
+                  {operationalStatus.restaurantApproved ? 'مفعّل ومعتمد' : 'غير مفعّل'}
+                </span>
+              </div>
+
+              <div className="p-2.5 bg-white rounded-lg border border-slate-200">
+                <span className="text-[10px] text-slate-400 block">استقبال المطعم:</span>
+                <span
+                  className={`font-extrabold text-xs ${
+                    operationalStatus.restaurantIsOpen ? 'text-emerald-700' : 'text-rose-700'
+                  }`}
+                >
+                  {operationalStatus.restaurantIsOpen ? 'مفتوح للطلبات' : 'مغلق مؤقتًا'}
+                </span>
+              </div>
+
+              <div className="p-2.5 bg-white rounded-lg border border-slate-200">
+                <span className="text-[10px] text-slate-400 block">دليفري المطعم:</span>
+                <span
+                  className={`font-extrabold text-xs ${
+                    operationalStatus.restaurantSelfDeliveryEnabled
+                      ? 'text-emerald-700'
+                      : 'text-slate-600'
+                  }`}
+                >
+                  {operationalStatus.restaurantSelfDeliveryEnabled ? 'متاح (ذاتي)' : 'معطّل (توصيل المنصة)'}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Combined New-Order vs Active-Orders Summary */}
+        <div
+          className={`p-3 rounded-xl border text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2 ${
+            operationalStatus.canReceiveNewOrders
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+              : 'bg-amber-50 border-amber-200 text-amber-950'
+          }`}
+        >
+          <div className="space-y-0.5">
+            <p className="font-black">{operationalStatus.intakeStatusTitle}</p>
+            <p className="text-[11px] opacity-90 leading-relaxed">
+              {operationalStatus.intakeStatusMessage}
+            </p>
+          </div>
+          <span
+            className={`px-2.5 py-1 rounded-lg font-bold text-[11px] shrink-0 w-fit ${
+              operationalStatus.canReceiveNewOrders
+                ? 'bg-emerald-600 text-white'
+                : 'bg-white border border-amber-300 text-amber-900'
+            }`}
+          >
+            {operationalStatus.canReceiveNewOrders ? 'استقبال الطلبات الجديدة متاح' : 'الطلبات الحالية مستمرة'}
+          </span>
+        </div>
+      </div>
+
       {/* Closed Warning Banner */}
       {!restaurant.isOpen && (
         <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl flex flex-col gap-2 shadow-xs">
@@ -127,7 +317,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </div>
               <div>
                 <h4 className="text-sm font-bold text-rose-900">
-                  المطعم مغلق حاليًا أمام استقبال طلبات الزبائن
+                  المطعم مغلق حاليًا أمام استقبال طلبات الزبائن (إعداد المطعم الفردي)
                 </h4>
                 <p className="text-xs text-rose-700 mt-0.5">
                   لن يظهر مطعمك كمتاح للطلب في تطبيق العملاء، ولكن يمكنك متابعة الطلبات السابقة وتحديث المنيو بشكل طبيعي.
@@ -231,7 +421,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         >
           <div>
             <div className="text-xs font-bold text-slate-800">كشف الحساب والتسويات</div>
-            <div className="text-[11px] text-slate-400 mt-0.5">عمولة 10% وسجل الإيصالات</div>
+            <div className="text-[11px] text-slate-400 mt-0.5">عمولة {restaurant.adminCommissionPercent}% وسجل الإيصالات</div>
           </div>
           <ArrowUpRight className="w-5 h-5 text-emerald-600 group-hover:scale-110 transition-transform" />
         </button>

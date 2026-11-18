@@ -55,6 +55,7 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
     decideCancellationWorkflow,
     requestOrderCancellationWorkflow,
     pendingCancellations,
+    operationalStatus,
   } = useApp();
 
   // Workflow items state
@@ -1060,6 +1061,21 @@ export const OrderDetailsModal: React.FC<OrderDetailsModalProps> = ({
 
         {/* Phase 2 Interactive Action Flow Footer */}
         <div className="p-4 sm:p-5 border-t border-slate-100 bg-slate-50 space-y-3">
+          {(operationalStatus.platformSectionEnabled === false ||
+            operationalStatus.platformDeliveryEnabled === false) && (
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-950 flex items-start gap-2">
+              <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <p className="leading-relaxed">
+                <strong>تنبيه الحالة المركزية:</strong>{' '}
+                {operationalStatus.platformSectionEnabled === false
+                  ? 'قسم الأكلات الجاهزة متوقف مركزيًا أمام الطلبات الجديدة،'
+                  : 'خدمة التوصيل المركزية متوقفة مؤقتًا أمام الطلبات الجديدة،'}{' '}
+                لكن هذا الطلب مسجل وقائم حاليًا ويستمر في مساره المعتمد (
+                {getArabicRouteLabel(order.rawRoute || order.route)}) حتى الإكمال دون أي إلغاء تلقائي.
+              </p>
+            </div>
+          )}
+
           {/* Sub-Dialog: Acceptance Route Selector */}
           {showAcceptDialog && (
             <div className="p-4 bg-white rounded-2xl border-2 border-amber-400 shadow-md space-y-3">

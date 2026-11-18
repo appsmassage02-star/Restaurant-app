@@ -17,9 +17,7 @@ import {
 import { useApp } from '../../context/AppContext';
 import {
   fetchRestaurantCentralTariffs,
-  fetchSectionSettings,
   CentralDeliveryTariffItem,
-  RestaurantSectionSettings,
 } from '../../services/deliveryAreaService';
 import { verifyPointInGeoBoundary } from '../../services/geographicService';
 
@@ -30,6 +28,10 @@ export const SettingsView: React.FC = () => {
     updateRestaurantDeliveryEnabled,
     dbRestaurant,
     refreshRestaurant,
+    sectionSettings,
+    sectionSettingsError,
+    refreshSectionSettings,
+    operationalStatus,
   } = useApp();
 
   // Basic Commercial Info (no delivery_fee or max_delivery_radius_km)
@@ -47,10 +49,6 @@ export const SettingsView: React.FC = () => {
   const [centralTariffs, setCentralTariffs] = useState<CentralDeliveryTariffItem[]>([]);
   const [tariffsError, setTariffsError] = useState<string | null>(null);
   const [loadingTariffs, setLoadingTariffs] = useState(false);
-
-  // Central section settings (Read-only from restaurant_section_settings)
-  const [sectionSettings, setSectionSettings] = useState<RestaurantSectionSettings | null>(null);
-  const [sectionSettingsError, setSectionSettingsError] = useState<string | null>(null);
 
   // Feedback
   const [isSavingBasic, setIsSavingBasic] = useState(false);
@@ -86,16 +84,15 @@ export const SettingsView: React.FC = () => {
     });
   }, [restaurant.latitude, restaurant.longitude, dbRestaurant]);
 
-  // Load Read-Only Central Coverage & Tariffs and Section Settings
+  // Load Read-Only Central Coverage & Tariffs and Refresh Central Ready Food Section Settings
   const loadCentralDeliveryData = useCallback(async () => {
     if (!restaurant.id) return;
     setLoadingTariffs(true);
     setTariffsError(null);
-    setSectionSettingsError(null);
     try {
-      const [tariffsRes, secRes] = await Promise.all([
+      const [tariffsRes] = await Promise.all([
         fetchRestaurantCentralTariffs(restaurant.id),
-        fetchSectionSettings(),
+        refreshSectionSettings(),
       ]);
 
       if (tariffsRes.error) {
@@ -104,19 +101,12 @@ export const SettingsView: React.FC = () => {
       } else if (tariffsRes.data) {
         setCentralTariffs(tariffsRes.data);
       }
-
-      if (secRes.error) {
-        setSectionSettingsError(secRes.error);
-        setSectionSettings(null);
-      } else {
-        setSectionSettings(secRes.data);
-      }
     } catch (err: any) {
       setTariffsError(err?.message || 'تعذر جلب التغطية والتسعير المركزي.');
     } finally {
       setLoadingTariffs(false);
     }
-  }, [restaurant.id]);
+  }, [restaurant.id, refreshSectionSettings]);
 
   useEffect(() => {
     loadCentralDeliveryData();
@@ -476,25 +466,7 @@ export const SettingsView: React.FC = () => {
                     <div className="flex flex-wrap items-center gap-2 self-end sm:self-center">
                       {item.customer_delivery_fee !== null && (
                         <span className="px-2.5 py-1 bg-amber-50 text-amber-900 font-bold rounded-lg border border-amber-200 text-xs">
-                          رسوم العميل: {item.customer_delivery_fee} ج.م
-                        </span>
-                      )}
-
-                      {item.base_delivery_fee !== null && (
-                        <span className="px-2.5 py-1 bg-slate-100 text-slate-700 font-semibold rounded-lg border border-slate-200 text-[11px]">
-                          الأجرة الأساسية: {item.base_delivery_fee} ج.م
-                        </span>
-                      )}
-
-                      {item.admin_commission !== null && (
-                        <span className="px-2.5 py-1 bg-slate-100 text-slate-700 font-semibold rounded-lg border border-slate-200 text-[11px]">
-                          عمولة التوصيل: {item.admin_commission} ج.م
-                        </span>
-                      )}
-
-                      {item.driver_net_fee !== null && (
-                        <span className="px-2.5 py-1 bg-blue-50 text-blue-800 font-semibold rounded-lg border border-blue-200 text-[11px]">
-                          صافي المندوب: {item.driver_net_fee} ج.م
+                          رسوم توصيل العميل: {item.customer_delivery_fee} ج.م
                         </span>
                       )}
 
@@ -516,15 +488,21 @@ export const SettingsView: React.FC = () => {
         </div>
       </div>
 
-      {/* 3. Central System Administration Policies (Read-only) */}
+      {/* 3. Level 1: Central Platform Section Settings (Read-only from public.app_section_settings for ready_food) */}
       <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 space-y-3">
-        <div className="flex items-center gap-2 font-bold text-slate-900 text-xs">
-          <ShieldCheck className="w-4 h-4 text-amber-600" />
-          <span>سياسات وإعدادات الإدارة المركزية (للقراءة فقط)</span>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="flex items-center gap-2 font-bold text-slate-900 text-xs">
+            <ShieldCheck className="w-4 h-4 text-amber-600" />
+            <span>إعدادات المنصة العامة — قسم الأكلات الجاهزة (للقراءة فقط)</span>
+          </div>
+          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-[10px] font-bold text-slate-600 w-fit">
+            <Lock className="w-3 h-3 text-amber-600" />
+            <span>من جدول app_section_settings (ready_food) — غير قابل للتعديل</span>
+          </span>
         </div>
 
         <p className="text-[11px] text-slate-600 leading-relaxed">
-          هذه الإعدادات تحددها إدارة منظومة طلباتي مركزيًا لضبط معايير الخدمة والتسوية، ولا يمكن تعديلها بواسطة المطعم:
+          هذه الإعدادات تحكم قسم الأكلات الجاهزة وخدمة التوصيل على مستوى المنصة بالكامل وتُدار حصريًا من لوحة الإدارة. لا تؤثر إعدادات مطعمك الفردية عليها، ولا يمكن تعديلها من تطبيق المطعم:
         </p>
 
         {sectionSettingsError && (
@@ -534,28 +512,70 @@ export const SettingsView: React.FC = () => {
           </div>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs pt-1">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs pt-1">
           <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-1">
-            <span className="text-slate-400 block text-[10px]">حالة قسم المطاعم بالمنظومة:</span>
-            {sectionSettings ? (
-              sectionSettings.section_enabled === null ? (
-                <span className="font-bold text-amber-700 text-xs">غير محدد في الإعداد المركزي</span>
-              ) : (
+            <span className="text-slate-400 block text-[10px]">تشغيل قسم الأكلات الجاهزة:</span>
+            {sectionSettings && sectionSettings.sectionEnabled !== null ? (
+              <span
+                className={`font-extrabold text-xs flex items-center gap-1.5 ${
+                  sectionSettings.sectionEnabled ? 'text-emerald-700' : 'text-rose-700'
+                }`}
+              >
                 <span
-                  className={`font-extrabold text-xs flex items-center gap-1 ${
-                    sectionSettings.section_enabled ? 'text-emerald-700' : 'text-rose-700'
+                  className={`w-2 h-2 rounded-full ${
+                    sectionSettings.sectionEnabled ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'
                   }`}
-                >
-                  <span
-                    className={`w-2 h-2 rounded-full ${
-                      sectionSettings.section_enabled ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'
-                    }`}
-                  />
-                  {sectionSettings.section_enabled ? 'مفعل ويعمل' : 'معطل مركزيًا'}
-                </span>
-              )
+                />
+                {operationalStatus.platformSectionLabel}
+              </span>
             ) : (
-              <span className="font-bold text-slate-500 text-xs">غير متاح من القاعدة المركزية</span>
+              <span className="font-bold text-amber-700 text-xs">
+                {sectionSettings ? 'غير محدد في الإعداد المركزي' : 'غير متاح من القاعدة المركزية'}
+              </span>
+            )}
+          </div>
+
+          <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-1">
+            <span className="text-slate-400 block text-[10px]">خدمة التوصيل المركزية:</span>
+            {sectionSettings && sectionSettings.deliveryEnabled !== null ? (
+              <span
+                className={`font-extrabold text-xs flex items-center gap-1.5 ${
+                  sectionSettings.deliveryEnabled ? 'text-emerald-700' : 'text-rose-700'
+                }`}
+              >
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    sectionSettings.deliveryEnabled ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'
+                  }`}
+                />
+                {operationalStatus.platformDeliveryLabel}
+              </span>
+            ) : (
+              <span className="font-bold text-amber-700 text-xs">
+                {sectionSettings ? 'غير محدد في الإعداد المركزي' : 'غير متاح من القاعدة المركزية'}
+              </span>
+            )}
+          </div>
+
+          <div className="p-3 bg-white rounded-xl border border-slate-200 space-y-1">
+            <span className="text-slate-400 block text-[10px]">ظهور القسم في تطبيق العملاء:</span>
+            {sectionSettings && sectionSettings.sectionVisible !== null ? (
+              <span
+                className={`font-extrabold text-xs flex items-center gap-1.5 ${
+                  sectionSettings.sectionVisible ? 'text-emerald-700' : 'text-slate-600'
+                }`}
+              >
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    sectionSettings.sectionVisible ? 'bg-emerald-500' : 'bg-slate-400'
+                  }`}
+                />
+                {operationalStatus.platformVisibilityLabel}
+              </span>
+            ) : (
+              <span className="font-bold text-amber-700 text-xs">
+                {sectionSettings ? 'غير محدد في الإعداد المركزي' : 'غير متاح من القاعدة المركزية'}
+              </span>
             )}
           </div>
 

@@ -18,6 +18,8 @@ import {
   Loader2,
   AlertCircle,
   ShieldAlert,
+  ShieldCheck,
+  Lock,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Order, OrderStatus, ExecutionRoute } from '../../types';
@@ -41,6 +43,8 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
     hasRestaurant,
     restaurant,
     pendingCancellations,
+    operationalStatus,
+    sectionSettingsError,
   } = useApp();
 
   const [statusFilter, setStatusFilter] = useState<string>(initialFilter);
@@ -224,6 +228,61 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
             <span>تحديث</span>
           </button>
         </div>
+      </div>
+
+      {/* Two-Level Platform Section & Delivery Status Strip */}
+      <div
+        className={`p-3.5 rounded-2xl border text-xs flex flex-col gap-2 ${
+          operationalStatus.platformAllowsNewOrders && operationalStatus.restaurantAllowsNewOrders
+            ? 'bg-emerald-50/70 border-emerald-200 text-emerald-950'
+            : 'bg-amber-50 border-amber-200 text-amber-950'
+        }`}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1 font-black text-slate-900">
+              <ShieldCheck className="w-4 h-4 text-amber-600" />
+              حالة قسم الأكلات الجاهزة (المنصة):
+            </span>
+            <span
+              className={`px-2 py-0.5 rounded-md font-bold text-[11px] ${
+                operationalStatus.platformSectionEnabled === true
+                  ? 'bg-emerald-100 text-emerald-800'
+                  : operationalStatus.platformSectionEnabled === false
+                  ? 'bg-rose-100 text-rose-800'
+                  : 'bg-white text-amber-800 border border-amber-200'
+              }`}
+            >
+              {operationalStatus.platformSectionLabel}
+            </span>
+            <span
+              className={`px-2 py-0.5 rounded-md font-bold text-[11px] ${
+                operationalStatus.platformDeliveryEnabled === true
+                  ? 'bg-emerald-100 text-emerald-800'
+                  : operationalStatus.platformDeliveryEnabled === false
+                  ? 'bg-rose-100 text-rose-800'
+                  : 'bg-white text-amber-800 border border-amber-200'
+              }`}
+            >
+              {operationalStatus.platformDeliveryLabel}
+            </span>
+            <span className="px-2 py-0.5 rounded-md font-bold text-[11px] bg-white border border-slate-200 text-slate-700">
+              المطعم الفردي: {restaurant.isOpen ? 'مفتوح' : 'مغلق مؤقتًا'}
+            </span>
+          </div>
+
+          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-600">
+            <Lock className="w-3 h-3 text-amber-600" />
+            <span>إعدادات المنصة للقراءة فقط</span>
+          </span>
+        </div>
+
+        {(!operationalStatus.canReceiveNewOrders || sectionSettingsError) && (
+          <p className="text-[11px] leading-relaxed opacity-90">
+            {sectionSettingsError ? `${sectionSettingsError} — ` : ''}
+            {operationalStatus.intakeStatusMessage}
+          </p>
+        )}
       </div>
 
       {/* Database Error Banner */}

@@ -1,5 +1,14 @@
 import { supabase, isSupabaseConfigured } from './supabase';
-import { DbDeliveryAreaTariff, DeliveryScopeLevel } from '../types/database';
+import {
+  DbAppSectionSettings,
+  DbDeliveryAreaTariff,
+  DeliveryScopeLevel,
+} from '../types/database';
+import {
+  AppSectionSettings,
+  OperationalIntakeBlockReason,
+  OperationalStatusEvaluation,
+} from '../types';
 
 export interface ServiceResult<T> {
   data: T | null;
@@ -31,12 +40,7 @@ export interface CentralDeliveryTariffItem {
   raw?: DbDeliveryAreaTariff;
 }
 
-export interface RestaurantSectionSettings {
-  id: string;
-  section_enabled: boolean | null;
-  created_at?: string;
-  updated_at?: string;
-}
+export const READY_FOOD_SECTION_KEY = 'ready_food';
 
 const TARIFF_SELECT_COLUMNS = [
   'id',
@@ -289,22 +293,36 @@ export async function fetchRestaurantCentralTariffs(
   }
 }
 
+export function mapDbAppSectionSettings(row: DbAppSectionSettings): AppSectionSettings {
+  return {
+    id: String(row.id),
+    sectionKey: row.section_key || READY_FOOD_SECTION_KEY,
+    sectionEnabled: typeof row.section_enabled === 'boolean' ? row.section_enabled : null,
+    sectionVisible: typeof row.section_visible === 'boolean' ? row.section_visible : null,
+    deliveryEnabled: typeof row.delivery_enabled === 'boolean' ? row.delivery_enabled : null,
+    createdAt: row.created_at ?? null,
+    updatedAt: row.updated_at ?? null,
+  };
+}
+
 /**
- * جلب الإعدادات الإدارية المركزية العامة من جدول restaurant_section_settings (للقراءة فقط)
- * بدون أي اعتماد على no_driver_timeout_minutes أو إرجاع قيم افتراضية عند غياب الإعداد أو فشل القراءة
+ * قراءة إعدادات قسم الأكلات الجاهزة المركزية من جدول public.app_section_settings
+ * بشرط section_key = 'ready_food' (للقراءة فقط دون أي تعديل أو قيم افتراضية وهمية).
+ * لا تقرأ أو تعتمد على v2_enabled.
  */
-export async function fetchSectionSettings(): Promise<ServiceResult<RestaurantSectionSettings>> {
+export async function fetchReadyFoodSectionSettings(): Promise<ServiceResult<AppSectionSettings>> {
   if (!isSupabaseConfigured) {
     return {
       data: null,
-      error: 'إعدادات الاتصال بـ Supabase غير مهيأة لقراءة إعدادات القسم المركزية.',
+      error: 'إعدادات الاتصال بـ Supabase غير مهيأة لقراءة إعدادات قسم الأكلات الجاهزة المركزية.',
     };
   }
 
   try {
     const { data, error } = await supabase
-      .from('restaurant_section_settings')
-      .select('id, section_enabled, created_at, updated_at')
+      .from('app_section_settings')
+      .select('id, section_key, section_enabled, section_visible, delivery_enabled, created_at, updated_at')
+      .eq('section_key', READY_FOOD_SECTION_KEY)
       .limit(1)
       .maybeSingle();
 
@@ -316,38 +334,141 @@ export async function fetchSectionSettings(): Promise<ServiceResult<RestaurantSe
         msgLower.includes('permission denied') ||
         msgLower.includes('row-level security');
 
-      console.warn('Could not fetch restaurant_section_settings:', error.message);
+      console.warn('Could not fetch app_section_settings (ready_food):', error.message);
       return {
         data: null,
         isPermissionError: isPerm,
         error: isPerm
-          ? 'صلاحيات قاعدة البيانات (RLS) تمنع قراءة إعدادات قسم المطاعم المركزية restaurant_section_settings.'
-          : `تعذر جلب إعدادات القسم المركزية: ${error.message}`,
+          ? 'صلاحيات قاعدة البيانات (RLS) تمنع قراءة إعدادات قسم الأكلات الجاهزة من جدول app_section_settings.'
+          : `تعذر جلب إعدادات القسم المركزي (ready_food): ${error.message}`,
       };
     }
 
     if (!data) {
       return {
         data: null,
-        error: 'لا توجد إعدادات مركزية مسجلة في جدول restaurant_section_settings.',
+        error: "لا يوجد سجل إعدادات مركزي للقسم (section_key = 'ready_food') في جدول app_section_settings.",
       };
     }
 
     return {
-      data: {
-        id: data.id,
-        section_enabled: typeof data.section_enabled === 'boolean' ? data.section_enabled : null,
-        created_at: data.created_at,
-        updated_at: data.updated_at,
-      },
+      data: mapDbAppSectionSettings(data as DbAppSectionSettings),
       error: null,
     };
   } catch (err: any) {
     return {
       data: null,
-      error: err?.message || 'فشل الاتصال بقاعدة البيانات لجلب إعدادات القسم المركزية.',
+      error: err?.message || 'فشل الاتصال بقاعدة البيانات لجلب إعدادات القسم المركزي.',
     };
   }
+}
+
+/**
+ * تقييم حالة التشغيل على المستويين بوضوح ودون خلط:
+ * - المستوى الأول: إعدادات المنصة العامة (app_section_settings لقسم ready_food)
+ * - المستوى الثاني: حالة المطعم الفردي (is_active, is_open, restaurant_delivery_enabled)
+ * مع ضمان استمرار الطلبات القائمة بالفعل في مسارها وعدم إلغائها تلقائيًا عند توقف القسم أو التوصيل.
+ */
+export function evaluateReadyFoodOperationalState(
+  sectionSettings: AppSectionSettings | null,
+  restaurantState: {
+    isApproved: boolean;
+    isOpen: boolean;
+    restaurantDeliveryEnabled: boolean;
+  }
+): OperationalStatusEvaluation {
+  const platformSectionEnabled = sectionSettings ? sectionSettings.sectionEnabled : null;
+  const platformSectionVisible = sectionSettings ? sectionSettings.sectionVisible : null;
+  const platformDeliveryEnabled = sectionSettings ? sectionSettings.deliveryEnabled : null;
+
+  const platformStatusKnown =
+    platformSectionEnabled !== null && platformDeliveryEnabled !== null;
+
+  const platformAllowsNewOrders =
+    platformSectionEnabled === true && platformDeliveryEnabled === true;
+
+  const platformSectionLabel =
+    platformSectionEnabled === true
+      ? 'القسم مفعل'
+      : platformSectionEnabled === false
+      ? 'القسم متوقف'
+      : 'غير متاح مركزيًا';
+
+  const platformDeliveryLabel =
+    platformDeliveryEnabled === true
+      ? 'خدمة التوصيل مفعلة'
+      : platformDeliveryEnabled === false
+      ? 'خدمة التوصيل متوقفة'
+      : 'غير متاح مركزيًا';
+
+  const platformVisibilityLabel =
+    platformSectionVisible === true
+      ? 'ظاهر في المنصة'
+      : platformSectionVisible === false
+      ? 'مخفي مركزيًا'
+      : 'غير محدد مركزيًا';
+
+  const restaurantApproved = Boolean(restaurantState.isApproved);
+  const restaurantIsOpen = Boolean(restaurantState.isOpen);
+  const restaurantSelfDeliveryEnabled = Boolean(restaurantState.restaurantDeliveryEnabled);
+  const restaurantAllowsNewOrders = restaurantApproved && restaurantIsOpen;
+
+  const canReceiveNewOrders = platformAllowsNewOrders && restaurantAllowsNewOrders;
+  const canAcceptNewDeliveryOrders = canReceiveNewOrders;
+  const canProcessExistingOrders = restaurantApproved;
+
+  let intakeBlockReason: OperationalIntakeBlockReason = 'READY';
+  let intakeStatusTitle = 'القسم مفعل وخدمة التوصيل مفعلة والمطعم جاهز لاستقبال الطلبات';
+  let intakeStatusMessage =
+    'إعدادات المنصة العامة لقسم الأكلات الجاهزة مفعلة، ومطعمك معتمد ومفتوح لاستقبال الطلبات الجديدة.';
+
+  if (platformSectionEnabled === false) {
+    intakeBlockReason = 'PLATFORM_SECTION_DISABLED';
+    intakeStatusTitle = 'قسم الأكلات الجاهزة متوقف مركزيًا من إدارة المنصة';
+    intakeStatusMessage =
+      'تم إيقاف استقبال الطلبات الجديدة لقسم الأكلات الجاهزة على مستوى المنصة. إعدادات مطعمك الفردية محفوظة كما هي، وتستمر الطلبات الحالية القائمة في مسارها حتى الإكمال دون أي إلغاء تلقائي.';
+  } else if (platformSectionEnabled === true && platformDeliveryEnabled === false) {
+    intakeBlockReason = 'PLATFORM_DELIVERY_DISABLED';
+    intakeStatusTitle = 'القسم مفعل ولكن خدمة التوصيل متوقفة مركزيًا';
+    intakeStatusMessage =
+      'قسم الأكلات الجاهزة مفعل، غير أن خدمة التوصيل المركزية متوقفة مؤقتًا فلا يمكن إنشاء أو استقبال طلبات توصيل جديدة. هذا التوقف مركزي ولا يعني أن العميل خارج النطاق الجغرافي، وتستمر الطلبات الحالية القائمة في مسارها حتى الإكمال.';
+  } else if (!platformStatusKnown) {
+    intakeBlockReason = 'SECTION_SETTINGS_UNAVAILABLE';
+    intakeStatusTitle = 'تعذر التحقق من حالة قسم الأكلات الجاهزة والتوصيل المركزي';
+    intakeStatusMessage =
+      'لم يتم استلام بيانات التشغيل المركزية من جدول app_section_settings لقسم ready_food، ولا يتم افتراض التفعيل تلقائيًا. تستمر متابعة الطلبات القائمة فقط بصورة طبيعية.';
+  } else if (!restaurantApproved) {
+    intakeBlockReason = 'RESTAURANT_INACTIVE';
+    intakeStatusTitle = 'المطعم غير مفعّل إداريًا بعد';
+    intakeStatusMessage =
+      'إعدادات المنصة العامة مفعلة، ولكن حساب مطعمك الفردي بانتظار التفعيل الإداري (is_active = true).';
+  } else if (!restaurantIsOpen) {
+    intakeBlockReason = 'RESTAURANT_CLOSED';
+    intakeStatusTitle = 'المطعم مغلق مؤقتًا من إعداداتك الفردية';
+    intakeStatusMessage =
+      'قسم الأكلات الجاهزة وخدمة التوصيل المركزية مفعّلان، لكن مطعمك مغلق مؤقتًا (is_open = false) أمام الطلبات الجديدة، وتستمر الطلبات الحالية القائمة في مسارها حتى الإكمال.';
+  }
+
+  return {
+    platformSectionEnabled,
+    platformSectionVisible,
+    platformDeliveryEnabled,
+    platformStatusKnown,
+    platformAllowsNewOrders,
+    platformSectionLabel,
+    platformVisibilityLabel,
+    platformDeliveryLabel,
+    restaurantApproved,
+    restaurantIsOpen,
+    restaurantSelfDeliveryEnabled,
+    restaurantAllowsNewOrders,
+    canReceiveNewOrders,
+    canAcceptNewDeliveryOrders,
+    canProcessExistingOrders,
+    intakeBlockReason,
+    intakeStatusTitle,
+    intakeStatusMessage,
+  };
 }
 
 /**

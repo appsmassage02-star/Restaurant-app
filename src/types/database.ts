@@ -105,6 +105,16 @@ export interface DbDeliveryAreaTariff {
   updated_at?: string;
 }
 
+export interface DbAppSectionSettings {
+  id: string;
+  section_key: string;
+  section_enabled: boolean | null;
+  section_visible: boolean | null;
+  delivery_enabled: boolean | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
 export interface RestaurantCategory {
   id: string; // uuid
   name: string; // اسم التصنيف (مثل: مطعم مشويات، حلويات...)

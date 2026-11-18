@@ -245,3 +245,47 @@ export interface AppNotification {
   read: boolean;
   orderId?: string;
 }
+
+export interface AppSectionSettings {
+  id: string;
+  sectionKey: string;
+  sectionEnabled: boolean | null;
+  sectionVisible: boolean | null;
+  deliveryEnabled: boolean | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
+export type OperationalIntakeBlockReason =
+  | 'READY'
+  | 'SECTION_SETTINGS_UNAVAILABLE'
+  | 'PLATFORM_SECTION_DISABLED'
+  | 'PLATFORM_DELIVERY_DISABLED'
+  | 'RESTAURANT_INACTIVE'
+  | 'RESTAURANT_CLOSED';
+
+export interface OperationalStatusEvaluation {
+  // المستوى الأول: إعدادات المنصة العامة (app_section_settings - ready_food)
+  platformSectionEnabled: boolean | null;
+  platformSectionVisible: boolean | null;
+  platformDeliveryEnabled: boolean | null;
+  platformStatusKnown: boolean;
+  platformAllowsNewOrders: boolean;
+  platformSectionLabel: string;
+  platformVisibilityLabel: string;
+  platformDeliveryLabel: string;
+
+  // المستوى الثاني: حالة المطعم الفردي (restaurants)
+  restaurantApproved: boolean;
+  restaurantIsOpen: boolean;
+  restaurantSelfDeliveryEnabled: boolean;
+  restaurantAllowsNewOrders: boolean;
+
+  // محصلة استقبال الطلبات الجديدة vs استمرار الطلبات القائمة
+  canReceiveNewOrders: boolean;
+  canAcceptNewDeliveryOrders: boolean;
+  canProcessExistingOrders: boolean;
+  intakeBlockReason: OperationalIntakeBlockReason;
+  intakeStatusTitle: string;
+  intakeStatusMessage: string;
+}
