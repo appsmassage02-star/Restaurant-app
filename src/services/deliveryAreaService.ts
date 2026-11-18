@@ -293,22 +293,26 @@ export async function fetchRestaurantCentralTariffs(
   }
 }
 
+const APP_SECTION_SETTINGS_SELECT_COLUMNS =
+  'section_key, section_enabled, section_visible, delivery_enabled, disabled_display_mode, display_width, updated_at, updated_by' as const;
+
 export function mapDbAppSectionSettings(row: DbAppSectionSettings): AppSectionSettings {
   return {
-    id: String(row.id),
-    sectionKey: row.section_key || READY_FOOD_SECTION_KEY,
+    sectionKey: typeof row.section_key === 'string' ? row.section_key : '',
     sectionEnabled: typeof row.section_enabled === 'boolean' ? row.section_enabled : null,
     sectionVisible: typeof row.section_visible === 'boolean' ? row.section_visible : null,
     deliveryEnabled: typeof row.delivery_enabled === 'boolean' ? row.delivery_enabled : null,
-    createdAt: row.created_at ?? null,
+    disabledDisplayMode: row.disabled_display_mode ?? null,
+    displayWidth: row.display_width ?? null,
     updatedAt: row.updated_at ?? null,
+    updatedBy: row.updated_by ?? null,
   };
 }
 
 /**
  * قراءة إعدادات قسم الأكلات الجاهزة المركزية من جدول public.app_section_settings
  * بشرط section_key = 'ready_food' (للقراءة فقط دون أي تعديل أو قيم افتراضية وهمية).
- * لا تقرأ أو تعتمد على v2_enabled.
+ * يلتزم حصريًا بالأعمدة الفعلية دون id أو created_at ودون الاعتماد على v2_enabled.
  */
 export async function fetchReadyFoodSectionSettings(): Promise<ServiceResult<AppSectionSettings>> {
   if (!isSupabaseConfigured) {
@@ -321,10 +325,10 @@ export async function fetchReadyFoodSectionSettings(): Promise<ServiceResult<App
   try {
     const { data, error } = await supabase
       .from('app_section_settings')
-      .select('id, section_key, section_enabled, section_visible, delivery_enabled, created_at, updated_at')
+      .select(APP_SECTION_SETTINGS_SELECT_COLUMNS)
       .eq('section_key', READY_FOOD_SECTION_KEY)
       .limit(1)
-      .maybeSingle();
+      .maybeSingle<DbAppSectionSettings>();
 
     if (error) {
       const msgLower = (error.message || '').toLowerCase();
@@ -352,7 +356,7 @@ export async function fetchReadyFoodSectionSettings(): Promise<ServiceResult<App
     }
 
     return {
-      data: mapDbAppSectionSettings(data as DbAppSectionSettings),
+      data: mapDbAppSectionSettings(data),
       error: null,
     };
   } catch (err: any) {

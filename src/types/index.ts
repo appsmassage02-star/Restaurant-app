@@ -247,13 +247,14 @@ export interface AppNotification {
 }
 
 export interface AppSectionSettings {
-  id: string;
   sectionKey: string;
   sectionEnabled: boolean | null;
   sectionVisible: boolean | null;
   deliveryEnabled: boolean | null;
-  createdAt?: string | null;
+  disabledDisplayMode?: string | null;
+  displayWidth?: string | null;
   updatedAt?: string | null;
+  updatedBy?: string | null;
 }
 
 export type OperationalIntakeBlockReason =

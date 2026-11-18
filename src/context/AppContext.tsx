@@ -514,7 +514,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             );
             return;
           }
-          if (payload.new) {
+          if (
+            payload.new &&
+            typeof payload.new.section_key === 'string' &&
+            'section_enabled' in payload.new &&
+            'section_visible' in payload.new &&
+            'delivery_enabled' in payload.new
+          ) {
             setSectionSettings(mapDbAppSectionSettings(payload.new as DbAppSectionSettings));
             setSectionSettingsError(null);
           } else {

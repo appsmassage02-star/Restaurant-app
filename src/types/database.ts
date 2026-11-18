@@ -106,13 +106,14 @@ export interface DbDeliveryAreaTariff {
 }
 
 export interface DbAppSectionSettings {
-  id: string;
-  section_key: string;
+  section_key: string; // المفتاح الأساسي
   section_enabled: boolean | null;
   section_visible: boolean | null;
   delivery_enabled: boolean | null;
-  created_at?: string | null;
+  disabled_display_mode?: string | null;
+  display_width?: string | null;
   updated_at?: string | null;
+  updated_by?: string | null;
 }
 
 export interface RestaurantCategory {
